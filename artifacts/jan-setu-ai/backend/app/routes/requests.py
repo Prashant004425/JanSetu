@@ -1,0 +1,129 @@
+from datetime import datetime
+import sqlite3
+
+from fastapi import APIRouter, Depends, Query
+
+from ..db import get_db
+from ..schemas import (
+    CitizenRequest,
+    CitizenRequestInput,
+    DashboardSummary,
+    RequestAnalysis,
+)
+from ..services.ai import analyze_request
+
+
+router = APIRouter(prefix="/requests", tags=["citizen requests"])
+
+
+def row_to_request(row: sqlite3.Row) -> CitizenRequest:
+    return CitizenRequest(
+        id=row["id"],
+        text=row["text"],
+        location=row["location"],
+        language=row["language"],
+        category=row["category"],
+        issue=row["issue"],
+        confidence=row["confidence"] if "confidence" in row.keys() else 0.86,
+        priority_score=row["priority_score"],
+        priority_label=(
+            "High priority"
+            if row["priority_score"] >= 75
+            else "Needs review"
+            if row["priority_score"] >= 55
+            else "Monitor"
+        ),
+        similar_request_count=0,
+        status=row["status"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+@router.get("", response_model=list[CitizenRequest])
+def list_requests(
+    limit: int = Query(default=20, ge=1, le=100),
+    connection: sqlite3.Connection = Depends(get_db),
+) -> list[CitizenRequest]:
+    rows = connection.execute(
+        "SELECT * FROM citizen_requests ORDER BY priority_score DESC, created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [row_to_request(row) for row in rows]
+
+
+@router.post("/analyze", response_model=CitizenRequest, status_code=201)
+def create_and_analyze_request(
+    payload: CitizenRequestInput,
+    connection: sqlite3.Connection = Depends(get_db),
+) -> CitizenRequest:
+    analysis = analyze_request(payload.text, payload.location)
+    similar_count = connection.execute(
+        "SELECT COUNT(*) AS count FROM citizen_requests WHERE category = ? OR location = ?",
+        (analysis["category"], analysis["location"]),
+    ).fetchone()["count"]
+    cursor = connection.execute(
+        """
+        INSERT INTO citizen_requests
+          (text, language, category, location, issue, priority_score, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'new')
+        """,
+        (
+            payload.text,
+            analysis["language"],
+            analysis["category"],
+            analysis["location"],
+            analysis["issue"],
+            analysis["priority_score"],
+        ),
+    )
+    connection.commit()
+    row = connection.execute(
+        "SELECT * FROM citizen_requests WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone()
+    result = row_to_request(row)
+    return result.model_copy(update={"similar_request_count": similar_count})
+
+
+@router.post("/preview", response_model=RequestAnalysis)
+def preview_analysis(payload: CitizenRequestInput) -> RequestAnalysis:
+    return RequestAnalysis(
+        **analyze_request(payload.text, payload.location),
+        similar_request_count=0,
+    )
+
+
+@router.get("/summary", response_model=DashboardSummary)
+def get_summary(
+    connection: sqlite3.Connection = Depends(get_db),
+) -> DashboardSummary:
+    total = connection.execute(
+        "SELECT COUNT(*) AS count FROM citizen_requests"
+    ).fetchone()["count"]
+    high_priority = connection.execute(
+        "SELECT COUNT(*) AS count FROM citizen_requests WHERE priority_score >= 75"
+    ).fetchone()["count"]
+    categories = connection.execute(
+        """
+        SELECT category, COUNT(*) AS count
+        FROM citizen_requests
+        GROUP BY category
+        ORDER BY count DESC, category ASC
+        LIMIT 1
+        """
+    ).fetchone()
+    locations = connection.execute(
+        """
+        SELECT location, COUNT(*) AS count
+        FROM citizen_requests
+        GROUP BY location
+        ORDER BY count DESC, location ASC
+        LIMIT 1
+        """
+    ).fetchone()
+    return DashboardSummary(
+        total_requests=total,
+        high_priority_requests=high_priority,
+        active_hotspots=max(1, min(3, high_priority)) if total else 0,
+        top_category=categories["category"] if categories else "No data",
+        top_location=locations["location"] if locations else "No data",
+    )

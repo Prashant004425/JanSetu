@@ -1,0 +1,32 @@
+[
+  {
+    "text": "The road connecting Ward 12 to the primary school is unsafe after rain and needs repair.",
+    "language": "en",
+    "category": "Roads & mobility",
+    "location": "Ward 12",
+    "issue": "The road connecting Ward 12 to the primary school is unsafe after rain and needs repair.",
+    "priority_score": 78,
+    "status": "new",
+    "created_at": "2026-09-03T09:20:00"
+  },
+  {
+    "text": "गांव में पीने के पानी की समस्या है और नल कई दिनों से खराब है।",
+    "language": "hi",
+    "category": "Water & sanitation",
+    "location": "Rampur village",
+    "issue": "गांव में पीने के पानी की समस्या है और नल कई दिनों से खराब है।",
+    "priority_score": 84,
+    "status": "new",
+    "created_at": "2026-09-04T11:45:00"
+  },
+  {
+    "text": "Our local health centre needs essential medicines and a regular nurse.",
+    "language": "en",
+    "category": "Healthcare",
+    "location": "Kalyan block",
+    "issue": "Our local health centre needs essential medicines and a regular nurse.",
+    "priority_score": 82,
+    "status": "review",
+    "created_at": "2026-09-04T15:10:00"
+  }
+]
