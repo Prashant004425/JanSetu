@@ -26,3 +26,14 @@ to = "/index.html"
 [services.env]
 PORT = "21872"
 BASE_PATH = "/"
+
+[[services]]
+name = "python-api"
+paths = [ "/jan-setu-api" ]
+localPort = 8000
+
+[services.development]
+run = "python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000"
+
+[services.env]
+BACKEND_PORT = "8000"

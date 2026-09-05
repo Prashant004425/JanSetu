@@ -16,9 +16,14 @@ class CitizenRequestInput(BaseModel):
 
 class RequestAnalysis(BaseModel):
     language: str
+    translated_text: str
+    understanding: str
+    categories: list[str]
     category: str
     location: str
     issue: str
+    urgency: str
+    severity: str
     confidence: float = Field(ge=0, le=1)
     priority_score: int = Field(ge=0, le=100)
     priority_label: str

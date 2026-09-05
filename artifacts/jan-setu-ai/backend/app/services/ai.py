@@ -68,11 +68,18 @@ def detect_language(text: str) -> str:
 
 
 def detect_category(text: str) -> str:
+    categories = detect_categories(text)
+    return " + ".join(categories)
+
+
+def detect_categories(text: str) -> list[str]:
     normalized = text.casefold()
-    for category, keywords in CATEGORY_RULES.items():
-        if any(keyword.casefold() in normalized for keyword in keywords):
-            return category
-    return "Other civic services"
+    matches = [
+        category
+        for category, keywords in CATEGORY_RULES.items()
+        if any(keyword.casefold() in normalized for keyword in keywords)
+    ]
+    return matches or ["Other civic services"]
 
 
 def extract_location(text: str, provided_location: str | None) -> str:
@@ -93,9 +100,61 @@ def build_issue(text: str, category: str) -> str:
     return f"{category} request: {clean_text[:89].rstrip()}..."
 
 
+def translate_to_common_language(
+    text: str,
+    categories: list[str],
+    location: str,
+) -> str:
+    if not re.search(r"[\u0900-\u097f]", text):
+        return text
+
+    category_text = " and ".join(categories).lower()
+    return (
+        f"Resident reports a {category_text} need near {location}. "
+        "The original Hindi request has been normalized into English for shared analysis."
+    )
+
+
+def classify_urgency(text: str, categories: list[str]) -> tuple[str, str]:
+    normalized = text.casefold()
+    urgent_signals = (
+        "urgent",
+        "unsafe",
+        "emergency",
+        "immediately",
+        "danger",
+        "तुरंत",
+        "खतरा",
+        "आपात",
+    )
+    severe_signals = (
+        "broken",
+        "outage",
+        "dry",
+        "no water",
+        "medicine",
+        "खराब",
+        "सूखा",
+        "पानी नहीं",
+        "दवा",
+    )
+    if any(signal in normalized for signal in urgent_signals):
+        return "Immediate", "High"
+    if any(signal in normalized for signal in severe_signals) or any(
+        category in {"Healthcare", "Water & sanitation"} for category in categories
+    ):
+        return "Soon", "High"
+    if "Roads & mobility" in categories or "Electricity" in categories:
+        return "Soon", "Medium"
+    return "Monitor", "Low"
+
+
 def score_request(text: str, category: str) -> int:
     score = 52
-    if category in {"Healthcare", "Water & sanitation"}:
+    if any(
+        current_category in category
+        for current_category in {"Healthcare", "Water & sanitation"}
+    ):
         score += 16
     if any(
         signal in text.casefold()
@@ -117,14 +176,29 @@ def label_for_score(score: int) -> str:
 
 def analyze_request(text: str, location: str | None = None) -> dict[str, str | float | int]:
     language = detect_language(text)
-    category = detect_category(text)
+    categories = detect_categories(text)
+    category = " + ".join(categories)
     resolved_location = extract_location(text, location)
+    translated_text = translate_to_common_language(
+        text,
+        categories,
+        resolved_location,
+    )
+    urgency, severity = classify_urgency(text, categories)
     priority_score = score_request(text, category)
     return {
         "language": language,
+        "translated_text": translated_text,
+        "understanding": (
+            f"{category} concern reported in {resolved_location}. "
+            f"Recommended response window: {urgency.lower()}."
+        ),
+        "categories": categories,
         "category": category,
         "location": resolved_location,
         "issue": build_issue(text, category),
+        "urgency": urgency,
+        "severity": severity,
         "confidence": 0.86 if category != "Other civic services" else 0.61,
         "priority_score": priority_score,
         "priority_label": label_for_score(priority_score),

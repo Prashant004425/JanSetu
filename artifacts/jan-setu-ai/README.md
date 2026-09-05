@@ -69,6 +69,8 @@ Interactive API documentation is available at `http://localhost:8000/docs`.
 - `POST /api/requests/analyze` — analyze and save a citizen request
 - `GET /api/requests/summary` — dashboard-ready aggregate values
 
+Each analysis exposes the detected language, an internal common-language translation, the system's understanding of the request, extracted location, one or more development categories, urgency, severity, confidence, and a transparent priority score. The policymaker dashboard reads these fields from the live SQLite-backed API.
+
 The AI layer is deterministic by design for this MVP. It detects English versus Devanagari Hindi, classifies common civic categories, extracts a simple location hint, and calculates a transparent score. A later iteration can add a hosted model behind the same service interface.
 
 ## Next build slice

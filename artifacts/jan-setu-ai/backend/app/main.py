@@ -30,8 +30,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(health_router, prefix="/api")
-app.include_router(requests_router, prefix="/api")
+for api_prefix in ("/api", "/jan-setu-api/api"):
+    app.include_router(health_router, prefix=api_prefix)
+    app.include_router(requests_router, prefix=api_prefix)
 
 
 @app.get("/")

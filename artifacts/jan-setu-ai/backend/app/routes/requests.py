@@ -17,13 +17,41 @@ router = APIRouter(prefix="/requests", tags=["citizen requests"])
 
 
 def row_to_request(row: sqlite3.Row) -> CitizenRequest:
+    has_stored_analysis = bool(
+        row["understanding"] if "understanding" in row.keys() else ""
+    )
+    stored_analysis = {
+        "translated_text": row["translated_text"] if has_stored_analysis else "",
+        "understanding": row["understanding"] if has_stored_analysis else "",
+        "urgency": row["urgency"] if has_stored_analysis else "",
+        "severity": row["severity"] if has_stored_analysis else "",
+    }
+    derived_analysis = (
+        analyze_request(row["text"], row["location"])
+        if not stored_analysis["understanding"]
+        else {}
+    )
+    details = {
+        **derived_analysis,
+        **{key: value for key, value in stored_analysis.items() if value},
+    }
+    categories = (
+        derived_analysis.get("categories")
+        or row["category"].split(" + ")
+    )
+    category = str(derived_analysis.get("category") or row["category"])
     return CitizenRequest(
         id=row["id"],
         text=row["text"],
         location=row["location"],
         language=row["language"],
-        category=row["category"],
+        translated_text=details["translated_text"],
+        understanding=details["understanding"],
+        categories=categories,
+        category=category,
         issue=row["issue"],
+        urgency=details["urgency"],
+        severity=details["severity"],
         confidence=row["confidence"] if "confidence" in row.keys() else 0.86,
         priority_score=row["priority_score"],
         priority_label=(
@@ -64,15 +92,20 @@ def create_and_analyze_request(
     cursor = connection.execute(
         """
         INSERT INTO citizen_requests
-          (text, language, category, location, issue, priority_score, status)
-        VALUES (?, ?, ?, ?, ?, ?, 'new')
+          (text, language, translated_text, understanding, category, location, issue,
+           urgency, severity, priority_score, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
         """,
         (
             payload.text,
             analysis["language"],
+            analysis["translated_text"],
+            analysis["understanding"],
             analysis["category"],
             analysis["location"],
             analysis["issue"],
+            analysis["urgency"],
+            analysis["severity"],
             analysis["priority_score"],
         ),
     )
