@@ -52,7 +52,7 @@ def row_to_request(row: sqlite3.Row) -> CitizenRequest:
         issue=row["issue"],
         urgency=details["urgency"],
         severity=details["severity"],
-        confidence=row["confidence"] if "confidence" in row.keys() else 0.86,
+        confidence=float(row["confidence"]) if "confidence" in row.keys() else 0.86,
         priority_score=row["priority_score"],
         priority_label=(
             "High priority"
@@ -73,10 +73,18 @@ def list_requests(
     connection: sqlite3.Connection = Depends(get_db),
 ) -> list[CitizenRequest]:
     rows = connection.execute(
-        "SELECT * FROM citizen_requests ORDER BY priority_score DESC, created_at DESC LIMIT ?",
+        "SELECT * FROM citizen_requests ORDER BY datetime(created_at) DESC, id DESC LIMIT ?",
         (limit,),
     ).fetchall()
-    return [row_to_request(row) for row in rows]
+    requests = []
+    for row in rows:
+        result = row_to_request(row)
+        similar_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM citizen_requests WHERE id != ? AND (category = ? OR location = ?)",
+            (row["id"], row["category"], row["location"]),
+        ).fetchone()["count"]
+        requests.append(result.model_copy(update={"similar_request_count": similar_count}))
+    return requests
 
 
 @router.post("/analyze", response_model=CitizenRequest, status_code=201)
@@ -93,8 +101,8 @@ def create_and_analyze_request(
         """
         INSERT INTO citizen_requests
           (text, language, translated_text, understanding, category, location, issue,
-           urgency, severity, priority_score, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
+          urgency, severity, confidence, priority_score, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
         """,
         (
             payload.text,
@@ -106,6 +114,7 @@ def create_and_analyze_request(
             analysis["issue"],
             analysis["urgency"],
             analysis["severity"],
+            analysis["confidence"],
             analysis["priority_score"],
         ),
     )
@@ -132,6 +141,10 @@ def get_summary(
     total = connection.execute(
         "SELECT COUNT(*) AS count FROM citizen_requests"
     ).fetchone()["count"]
+    completed = connection.execute(
+        "SELECT COUNT(*) AS count FROM citizen_requests WHERE status = 'completed'"
+    ).fetchone()["count"]
+    pending = total - completed
     high_priority = connection.execute(
         "SELECT COUNT(*) AS count FROM citizen_requests WHERE priority_score >= 75"
     ).fetchone()["count"]
@@ -155,6 +168,8 @@ def get_summary(
     ).fetchone()
     return DashboardSummary(
         total_requests=total,
+        completed_requests=completed,
+        pending_requests=pending,
         high_priority_requests=high_priority,
         active_hotspots=max(1, min(3, high_priority)) if total else 0,
         top_category=categories["category"] if categories else "No data",

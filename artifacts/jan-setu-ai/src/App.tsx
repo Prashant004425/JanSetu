@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -75,35 +75,17 @@ function Brand({ dark = false }: { dark?: boolean }) {
 }
 
 function Header() {
-  const [open, setOpen] = useState(false);
-  const [location] = useLocation();
   return (
-    <header className="relative z-20 border-b border-[#d9d2c4]/80 bg-[#f9f5ed]/90 backdrop-blur-md">
+    <header className="relative z-20 border-b border-[#d9d2c4]/80 bg-[#f9f5ed]">
       <div className="mx-auto flex max-w-[1240px] items-center justify-between px-5 py-4 lg:px-8">
         <Brand />
-        <nav className="hidden items-center gap-8 md:flex" aria-label="Primary navigation">
-          {navItems.map((item) => (
-            <Link key={item.href} href={item.href} data-testid={`link-nav-${item.label.toLowerCase().replaceAll(' ', '-')}`} className={`relative py-2 text-[13px] font-semibold transition-colors ${location === item.href ? 'text-[#17383e]' : 'text-[#68817b] hover:text-[#17383e]'}`}>
-              {item.label}
-              {location === item.href && <span className="absolute -bottom-[18px] left-0 right-0 h-0.5 rounded-full bg-[#e4a83c]" />}
-            </Link>
-          ))}
-          <Link href="/citizen" data-testid="link-header-start" className="group flex items-center gap-2 rounded-full bg-[#17383e] px-5 py-2.5 text-[13px] font-bold text-[#f9f5ed] transition-transform hover:-translate-y-0.5">
-            Start with your voice <ArrowRight size={15} className="transition-transform group-hover:translate-x-0.5" />
-          </Link>
-        </nav>
-        <button type="button" aria-label="Open navigation" data-testid="button-open-menu" onClick={() => setOpen(true)} className="rounded-lg p-2 text-[#17383e] md:hidden">
-          <Menu size={23} />
-        </button>
-      </div>
-      {open && (
-        <div className="absolute inset-x-0 top-full border-b border-[#d9d2c4] bg-[#f9f5ed] p-5 shadow-lg md:hidden">
-          <div className="mb-4 flex justify-between"><span className="text-xs font-bold uppercase tracking-widest text-[#68817b]">Navigate</span><button type="button" aria-label="Close navigation" data-testid="button-close-menu" onClick={() => setOpen(false)}><X size={19} /></button></div>
-          <div className="grid gap-1">
-            {navItems.map((item) => <Link key={item.href} href={item.href} onClick={() => setOpen(false)} data-testid={`link-mobile-${item.label.toLowerCase().replaceAll(' ', '-')}`} className="rounded-lg px-3 py-3 font-semibold text-[#17383e] hover:bg-[#ece5d8]">{item.label}</Link>)}
-          </div>
+        <div className="flex items-center gap-3 text-right">
+          <span className="hidden text-[10px] font-bold uppercase tracking-[.16em] text-[#698079] sm:block">Government intelligence platform</span>
+          <span className="flex items-center gap-2 rounded-full border border-[#bcd1c4] bg-[#e9f1eb] px-3 py-2 text-[10px] font-bold text-[#315a58]">
+            <span className="h-2 w-2 rounded-full bg-[#5d9a85]" /> Live Demo · Synthetic Data
+          </span>
         </div>
-      )}
+      </div>
     </header>
   );
 }
@@ -241,6 +223,9 @@ function AnalysisDetails({ analysis, compact = false }: { analysis: RequestAnaly
 
   return (
     <div className={compact ? 'space-y-4' : 'space-y-5'} data-testid="card-ai-analysis-details">
+      <div className="flex justify-end">
+        <SpeakHindiButton analysis={analysis} />
+      </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl bg-[#e8eee7] p-4">
           <p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#52736c]">What JanSetu understood</p>
@@ -290,6 +275,32 @@ function LanguagesIcon() {
   return <Globe2 size={15} />;
 }
 
+function SpeakHindiButton({ analysis }: { analysis: RequestAnalysis }) {
+  const speak = () => {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const message = `जनसेतु ने आपकी ${analysis.category} से जुड़ी समस्या समझी है। स्थान: ${analysis.location}। प्राथमिकता: ${analysis.priority_label}।`;
+    const utterance = new SpeechSynthesisUtterance(message);
+    utterance.lang = 'hi-IN';
+    utterance.rate = 0.9;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={speak}
+      className="inline-flex items-center gap-2 rounded-lg border border-[#cfd8d0] px-3 py-2 text-xs font-bold text-[#315a58] hover:bg-[#eef2eb]"
+      aria-label="Speak analysis in Hindi"
+      data-testid="button-speak-hindi"
+    >
+      <Volume2 size={15} /> हिंदी में सुनें
+    </button>
+  );
+}
+
+type CitizenFlowState = 'idle' | 'listening_initial' | 'processing_initial' | 'missing_information' | 'listening_followup' | 'processing_followup' | 'confirming' | 'submitting' | 'submitted' | 'error';
+
 type SpeechResultEvent = {
   results: ArrayLike<ArrayLike<{ transcript: string }>>;
 };
@@ -299,8 +310,10 @@ type SpeechRecognizer = {
   interimResults: boolean;
   maxAlternatives: number;
   start: () => void;
+  stop: () => void;
   onresult: ((event: SpeechResultEvent) => void) | null;
   onerror: (() => void) | null;
+  onstart: (() => void) | null;
   onend: (() => void) | null;
 };
 
@@ -313,31 +326,58 @@ function Citizen() {
   const [isSaving, setIsSaving] = useState(false);
   const [apiError, setApiError] = useState('');
   const [isListening, setIsListening] = useState(false);
+  const [followupTranscript, setFollowupTranscript] = useState('');
   const [voiceInfo, setVoiceInfo] = useState(false);
+  const [myRequests, setMyRequests] = useState<CitizenRequest[]>([]);
+  const [flowState, setFlowState] = useState<CitizenFlowState>('idle');
+  const [missingQuestion, setMissingQuestion] = useState('');
+  const recognitionRef = useRef<SpeechRecognizer | null>(null);
   const sample = 'The streetlights on our lane have not worked for two weeks.';
 
-  const handleAnalyze = async () => {
-    if (!text.trim()) return;
+  useEffect(() => {
+    listRequests()
+      .then((nextRequests) => setMyRequests(nextRequests.slice(0, 5)))
+      .catch(() => setMyRequests([]));
+  }, [submitted]);
+
+  const analyzeText = async (requestText: string, requestLocation: string) => {
+    if (!requestText.trim()) return;
     setIsAnalyzing(true);
+    setFlowState('processing_initial');
     setApiError('');
+    setAnalysis(null);
     try {
-      const nextAnalysis = await previewRequest({ text: text.trim(), location: location.trim() || undefined });
+      const nextAnalysis = await previewRequest({ text: requestText.trim(), location: requestLocation.trim() || undefined });
       setAnalysis(nextAnalysis);
+      if (!requestLocation.trim() && nextAnalysis.location === 'Location to be verified') {
+        setMissingQuestion('आप किस गांव या इलाके से हैं?');
+        setFlowState('missing_information');
+      } else {
+        setFlowState('confirming');
+      }
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'The AI analysis service is unavailable.');
+      setFlowState('error');
     } finally {
       setIsAnalyzing(false);
     }
   };
 
+  const handleAnalyze = () => analyzeText(text, location);
+
   const handleSave = async () => {
-    if (!text.trim()) return;
+    if (!text.trim() || !analysis) {
+      setApiError('Please analyze the request before confirming it.');
+      return;
+    }
     setIsSaving(true);
+    setFlowState('submitting');
     setApiError('');
     try {
       const savedRequest = await saveRequest({ text: text.trim(), location: location.trim() || undefined });
       setAnalysis(savedRequest);
       setSubmitted(true);
+      setFlowState('submitted');
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'The request could not be saved.');
     } finally {
@@ -345,7 +385,12 @@ function Citizen() {
     }
   };
 
-  const handleVoice = () => {
+  useEffect(() => () => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+  }, []);
+
+  const handleVoice = (mode: 'initial' | 'followup' = 'initial') => {
     const speechWindow = window as Window & {
       SpeechRecognition?: new () => SpeechRecognizer;
       webkitSpeechRecognition?: new () => SpeechRecognizer;
@@ -353,28 +398,74 @@ function Citizen() {
     const Recognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
     if (!Recognition) {
       setVoiceInfo(true);
+      setFlowState('error');
       return;
     }
+    recognitionRef.current?.stop();
     const recognition = new Recognition();
+    recognitionRef.current = recognition;
     recognition.lang = 'hi-IN';
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
-    recognition.onresult = (event) => {
-      setText(event.results[0][0].transcript);
+    recognition.onstart = () => {
+      setIsListening(true);
+      setFlowState(mode === 'followup' ? 'listening_followup' : 'listening_initial');
       setVoiceInfo(false);
+    };
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setIsListening(false);
+      if (mode === 'followup') {
+        setLocation(transcript);
+        setFollowupTranscript(transcript);
+        setFlowState('missing_information');
+      } else {
+        setText(transcript);
+        void analyzeText(transcript, location);
+      }
     };
     recognition.onerror = () => {
       setVoiceInfo(true);
       setIsListening(false);
+      setFlowState('error');
     };
-    recognition.onend = () => setIsListening(false);
-    setIsListening(true);
-    recognition.start();
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+    };
+    try {
+      recognition.start();
+    } catch {
+      setIsListening(false);
+      setVoiceInfo(true);
+      setApiError('Voice input could not start. You can type instead.');
+      setFlowState('error');
+    }
+  };
+
+  const handleAnalyzeWithLocation = async (nextLocation: string) => {
+    if (!text.trim()) return;
+    setIsAnalyzing(true);
+    setFlowState('processing_followup');
+    setApiError('');
+    try {
+      const nextAnalysis = await previewRequest({ text: text.trim(), location: nextLocation.trim() });
+      setAnalysis(nextAnalysis);
+      setFlowState('confirming');
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : 'The AI analysis service is unavailable.');
+      setFlowState('error');
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const editRequest = () => {
     setSubmitted(false);
     setAnalysis(null);
+    setFlowState('idle');
+    setMissingQuestion('');
+    setFollowupTranscript('');
     setApiError('');
   };
 
@@ -387,7 +478,7 @@ function Citizen() {
             <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-[#e8eee7] px-3 py-2 text-[11px] font-bold uppercase tracking-[.16em] text-[#52736c]"><MessageSquare size={14} /> Citizen intake</div>
             <h1 className="font-serif text-5xl font-bold leading-[.96] tracking-[-.06em] text-[#17383e] sm:text-6xl">What should improve where you live?</h1>
             <p className="mt-6 max-w-[410px] text-[16px] leading-7 text-[#5a706b]">Tell us in your own words. A useful request can be about a road, a school, water, safety, health or anything your community needs.</p>
-            <div className="mt-8 flex gap-3 rounded-xl border border-[#d9d2c4] bg-[#f0eadf] p-4 text-xs leading-5 text-[#698079]"><ShieldCheck size={17} className="mt-0.5 shrink-0 text-[#52736c]" /><span>Your words stay yours. This demo does not send data anywhere.</span></div>
+            <div className="mt-8 flex gap-3 rounded-xl border border-[#d9d2c4] bg-[#f0eadf] p-4 text-xs leading-5 text-[#698079]"><ShieldCheck size={17} className="mt-0.5 shrink-0 text-[#52736c]" /><span>Your request is stored in the shared synthetic demo database for government analysis.</span></div>
           </div>
           <div className="rounded-[1.5rem] border border-[#d9d2c4] bg-[#fcf8f1] p-5 shadow-[0_18px_45px_rgba(23,56,62,.06)] sm:p-8">
             {!submitted && !analysis ? (
@@ -396,15 +487,31 @@ function Citizen() {
                 <textarea id="request" value={text} maxLength={500} onChange={(event) => setText(event.target.value)} data-testid="input-citizen-request" placeholder="For example: The handpump near our anganwadi has been dry for three weeks..." className="min-h-[180px] w-full resize-none rounded-xl border border-[#cfd8d0] bg-[#f9f5ed] p-4 text-[15px] leading-7 text-[#17383e] outline-none transition-colors placeholder:text-[#9aaea5] focus:border-[#52736c] focus:ring-4 focus:ring-[#dce9df]" />
                 <div className="mt-4"><label htmlFor="location" className="text-xs font-bold uppercase tracking-[.14em] text-[#52736c]">Where is this happening? <span className="font-normal normal-case tracking-normal text-[#8ba098]">(optional)</span></label><div className="mt-2 flex items-center gap-2 rounded-xl border border-[#cfd8d0] bg-[#f9f5ed] px-3 focus-within:border-[#52736c]"><MapPin size={16} className="text-[#8ba098]" /><input id="location" value={location} onChange={(event) => setLocation(event.target.value)} data-testid="input-citizen-location" placeholder="Ward, village, block or landmark" className="w-full bg-transparent py-3 text-sm text-[#17383e] outline-none placeholder:text-[#9aaea5]" /></div></div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><button type="button" data-testid="button-use-example" onClick={() => setText(sample)} className="text-xs font-bold text-[#52736c] underline underline-offset-4">Use a sample request</button><span className="text-[11px] text-[#91a49d]">{text.length}/500</span></div>
-                <div className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto]"><button type="button" data-testid="button-voice-input" onClick={handleVoice} className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-bold transition-colors ${isListening ? 'border-[#e4a83c] bg-[#fcf2d8] text-[#765821]' : 'border-[#cfd8d0] text-[#315a58] hover:border-[#52736c] hover:bg-[#eef2eb]'}`}><Mic size={17} /> {isListening ? 'Listening…' : 'Add by voice'}</button><button type="button" disabled={!text.trim() || isAnalyzing} data-testid="button-continue-request" onClick={handleAnalyze} className="group flex items-center justify-center gap-2 rounded-xl bg-[#17383e] px-6 py-3 text-sm font-bold text-[#f8f0df] transition-all hover:bg-[#28565a] disabled:cursor-not-allowed disabled:opacity-40">{isAnalyzing ? 'Understanding…' : 'Continue'} {!isAnalyzing && <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />}</button></div>
+                <div className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto]"><button type="button" data-testid="button-voice-input" onClick={() => handleVoice('initial')} className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-bold transition-colors ${isListening ? 'border-[#e4a83c] bg-[#fcf2d8] text-[#765821]' : 'border-[#cfd8d0] text-[#315a58] hover:border-[#52736c] hover:bg-[#eef2eb]'}`}><Mic size={17} /> {isListening ? 'Listening…' : 'Add by voice'}</button><button type="button" disabled={!text.trim() || isAnalyzing} data-testid="button-continue-request" onClick={handleAnalyze} className="group flex items-center justify-center gap-2 rounded-xl bg-[#17383e] px-6 py-3 text-sm font-bold text-[#f8f0df] transition-all hover:bg-[#28565a] disabled:cursor-not-allowed disabled:opacity-40">{isAnalyzing ? 'Understanding…' : 'Continue'} {!isAnalyzing && <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />}</button></div>
+                {isListening && <div className="mt-4 rounded-xl border border-[#d9aa45] bg-[#fcf2d8] p-4 text-sm font-bold text-[#765821]" role="status"><span className="mr-2 inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-[#d9aa45]" />Listening… Tell us what is happening in your area. <span className="mt-1 block text-xs font-normal">Speak now.</span></div>}
                 {voiceInfo && <div className="mt-4 flex items-start gap-3 rounded-xl border border-[#ead2a0] bg-[#fcf2d8] p-4 text-xs leading-5 text-[#765821]" role="status" data-testid="status-voice-support"><Volume2 size={16} className="mt-0.5 shrink-0" /><span><strong className="font-bold">Voice capture is not available in this browser.</strong> You can type your request instead.</span><button type="button" aria-label="Dismiss voice information" data-testid="button-dismiss-voice-info" onClick={() => setVoiceInfo(false)} className="ml-auto"><X size={15} /></button></div>}
               </>
+            ) : analysis && !submitted && (flowState === 'missing_information' || flowState === 'listening_followup') ? (
+              <div className="py-2" data-testid="state-request-question">
+                <div className="mb-6 flex items-start justify-between">
+                  <div><p className="text-xs font-bold uppercase tracking-[.17em] text-[#52736c]">One more detail</p><h2 className="mt-2 font-serif text-3xl font-bold tracking-[-.04em]">JanSetu needs one more detail.</h2></div>
+                  <MapPin size={23} className="text-[#e4a83c]" />
+                </div>
+                <p className="rounded-xl bg-[#f0eadf] p-4 text-lg font-bold text-[#315a58]">{missingQuestion}</p>
+                {flowState === 'listening_followup' ? <div className="mt-4 rounded-xl border border-[#d45b4c] bg-[#fff0ec] p-4 text-sm font-bold text-[#a43e32]" role="status"><span className="mr-2 inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-[#d45b4c]" />Listening… Tell us your village or area now.<span className="mt-1 block text-xs font-normal">Example: Rampur</span></div> : followupTranscript ? <div className="mt-4 rounded-xl bg-[#e8eee7] p-4 text-sm text-[#315a58]" role="status"><strong>You said:</strong> “{followupTranscript}”</div> : <p className="mt-4 text-sm text-[#698079]">Please tell us your village or area.</p>}
+                <input value={location} onChange={(event) => { setLocation(event.target.value); setFollowupTranscript(event.target.value); }} placeholder="Type your village or area" className="mt-4 w-full rounded-xl border border-[#cfd8d0] bg-[#f9f5ed] px-4 py-3 text-sm outline-none focus:border-[#52736c]" autoFocus />
+                <div className="mt-4 flex flex-wrap justify-end gap-3">
+                  <button type="button" onClick={() => handleVoice('followup')} disabled={isListening} className="flex items-center gap-2 rounded-xl border border-[#cfd8d0] px-4 py-3 text-sm font-bold text-[#315a58] disabled:opacity-50"><Mic size={16} /> {isListening ? 'Listening…' : 'Tell us your village'}</button>
+                  {isListening && <button type="button" onClick={() => { recognitionRef.current?.stop(); setIsListening(false); setFlowState('missing_information'); }} className="rounded-xl border border-[#d45b4c] px-4 py-3 text-sm font-bold text-[#a43e32]">Stop listening</button>}
+                  <button type="button" onClick={() => handleAnalyzeWithLocation(location)} disabled={!location.trim() || isAnalyzing || isListening} className="rounded-xl bg-[#17383e] px-5 py-3 text-sm font-bold text-[#f8f0df] disabled:opacity-50">{isAnalyzing ? 'Understanding…' : 'Continue'}</button>
+                </div>
+              </div>
             ) : analysis && !submitted ? (
               <div className="py-2" data-testid="state-request-review">
                 <div className="mb-6 flex items-start justify-between"><div><p className="text-xs font-bold uppercase tracking-[.17em] text-[#52736c]">Step 2 of 3</p><h2 className="mt-2 font-serif text-3xl font-bold tracking-[-.04em]">Here is what JanSetu understood.</h2></div><Activity size={23} className="text-[#e4a83c]" /></div>
                 <AnalysisDetails analysis={analysis} />
                 {apiError && <p className="mt-4 rounded-xl bg-[#f4ddd4] p-3 text-xs leading-5 text-[#994e3d]" role="alert" data-testid="status-api-error">{apiError}</p>}
-                <div className="mt-6 flex flex-wrap justify-end gap-3"><button type="button" data-testid="button-edit-analysis" onClick={editRequest} className="rounded-xl border border-[#cfd8d0] px-4 py-3 text-sm font-bold text-[#315a58] hover:bg-[#eef2eb]">Edit request</button><button type="button" data-testid="button-confirm-request" onClick={handleSave} disabled={isSaving} className="flex items-center gap-2 rounded-xl bg-[#17383e] px-5 py-3 text-sm font-bold text-[#f8f0df] disabled:opacity-50">{isSaving ? 'Sharing…' : 'Confirm and share'} {!isSaving && <Send size={15} />}</button></div>
+                <div className="mt-6 flex flex-wrap justify-end gap-3"><button type="button" data-testid="button-edit-analysis" onClick={editRequest} className="rounded-xl border border-[#cfd8d0] px-4 py-3 text-sm font-bold text-[#315a58] hover:bg-[#eef2eb]">Edit request</button><button type="button" data-testid="button-confirm-request" onClick={handleSave} disabled={!analysis || isSaving} aria-busy={isSaving} className="flex items-center gap-2 rounded-xl bg-[#17383e] px-5 py-3 text-sm font-bold text-[#f8f0df] disabled:cursor-not-allowed disabled:opacity-50">{isSaving ? 'Sharing…' : 'Confirm and share'} {!isSaving && <Send size={15} />}</button></div>
               </div>
             ) : (
               <div className="py-2" data-testid="status-request-ready">
@@ -421,8 +528,26 @@ function Citizen() {
           </div>
         </div>
         <div className="mt-20 grid gap-4 border-t border-[#d9d2c4] pt-8 sm:grid-cols-3">
-          {[[<FileText size={18} />, 'Say it plainly', 'No official language or department knowledge needed.'], [<Globe2 size={18} />, 'Language-ready', 'Designed to meet people in the language they use.'], [<Headphones size={18} />, 'Voice is coming', 'Speech input is part of the product roadmap.']].map(([icon, title, body], index) => <div key={index} className="flex gap-3"><span className="text-[#c77a52]">{icon}</span><div><div className="text-sm font-bold">{title}</div><div className="mt-1 text-xs leading-5 text-[#698079]">{body}</div></div></div>)}
+          {[[<FileText size={18} />, 'Say it plainly', 'No official language or department knowledge needed.'], [<Globe2 size={18} />, 'Language-ready', 'Designed to meet people in the language they use.'], [<Headphones size={18} />, 'Voice ready', 'Use speech input or type your request.']].map(([icon, title, body], index) => <div key={index} className="flex gap-3"><span className="text-[#c77a52]">{icon}</span><div><div className="text-sm font-bold">{title}</div><div className="mt-1 text-xs leading-5 text-[#698079]">{body}</div></div></div>)}
         </div>
+        <section className="mt-8 rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5 sm:p-7">
+          <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">My requests</p>
+          <h2 className="mt-2 font-serif text-2xl font-bold">Request status</h2>
+          <div className="mt-4 divide-y divide-[#e5ded1]">
+            {myRequests.map((request) => (
+              <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0">
+                <div>
+                  <p className="text-sm font-bold">{request.category}</p>
+                  <p className="mt-1 text-xs text-[#698079]">{request.location} · {request.text}</p>
+                </div>
+                <span className="rounded-full bg-[#e8eee7] px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-[#52736c]">
+                  {request.status === 'completed' ? 'Resolved' : request.status === 'new' ? 'Received' : 'Under Review'}
+                </span>
+              </div>
+            ))}
+            {!myRequests.length && <p className="py-3 text-sm text-[#698079]">Your submitted requests will appear here.</p>}
+          </div>
+        </section>
       </main>
     </PageFrame>
   );
@@ -434,6 +559,27 @@ const priorities = [
   { name: 'Street safety', share: '17.4%', count: '782 requests', color: '#5d9a85' },
   { name: 'Public health', share: '13.8%', count: '620 requests', color: '#6b91a5' },
 ];
+
+function exportRequests(requests: CitizenRequest[]) {
+  const header = ['id', 'status', 'category', 'location', 'priority_score', 'created_at'];
+  const rows = requests.map((request) => [
+    request.id,
+    request.status,
+    request.category,
+    request.location,
+    request.priority_score,
+    request.created_at,
+  ]);
+  const csv = [header, ...rows]
+    .map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(','))
+    .join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'jansetu-priority-signals.csv';
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 function Dashboard() {
   const [activePriority, setActivePriority] = useState('Water access');
@@ -488,15 +634,17 @@ function Dashboard() {
         <div className="mb-10 flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 inline-flex items-center gap-2 rounded-full border border-[#ead2a0] bg-[#fcf2d8] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[.16em] text-[#765821]"><Sparkles size={13} /> Prototype workspace</div><h1 className="font-serif text-4xl font-bold tracking-[-.055em] sm:text-5xl">Development intelligence</h1><p className="mt-3 text-sm text-[#698079]">A transparent view of what residents are asking for across Nashik, Maharashtra.</p></div><button type="button" data-testid="button-dashboard-help" className="flex items-center gap-2 self-start rounded-full border border-[#cfd8d0] px-4 py-2.5 text-xs font-bold text-[#315a58] hover:bg-[#eef2eb] sm:self-auto"><CircleHelp size={15} /> About this demo</button></div>
         <div className="mb-7 flex items-start gap-3 rounded-xl border border-[#bcd1c4] bg-[#e9f1eb] p-4 text-sm text-[#315a58]" data-testid="status-demo-banner"><Sparkles size={18} className="mt-0.5 shrink-0 text-[#5d9a85]" /><div><strong className="font-bold">Synthetic demo data.</strong> This view uses the local SQLite analysis feed. No government system is connected.</div></div>
         {dashboardError && <div className="mb-7 flex items-start gap-3 rounded-xl border border-[#ead2a0] bg-[#fcf2d8] p-4 text-xs leading-5 text-[#765821]" role="status" data-testid="status-dashboard-api"><AlertTriangle size={16} className="mt-0.5 shrink-0" /><span>Live AI analysis is not connected yet. Start the FastAPI backend to load saved citizen signals.</span></div>}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
           <Kpi label="Requests received" value={isLoading ? '…' : summary ? String(summary.total_requests) : '—'} trend={summary ? 'from SQLite feed' : 'waiting for API'} icon={<MessageSquare size={18} />} />
+          <Kpi label="Completed work" value={isLoading ? '…' : summary ? String(summary.completed_requests) : '—'} trend={summary ? 'काम पूरा हुआ' : 'waiting for API'} icon={<Check size={18} />} />
+          <Kpi label="Pending work" value={isLoading ? '…' : summary ? String(summary.pending_requests) : '—'} trend={summary ? 'काम बाकी है' : 'waiting for API'} icon={<Clock3 size={18} />} />
           <Kpi label="Active hotspots" value={isLoading ? '…' : summary ? String(summary.active_hotspots) : '—'} trend={summary ? 'high-demand clusters' : 'waiting for API'} icon={<Map size={18} />} />
           <Kpi label="High priority" value={isLoading ? '…' : summary ? String(summary.high_priority_requests) : '—'} trend={summary ? 'transparent score ≥ 75' : 'waiting for API'} icon={<Target size={18} />} />
           <Kpi label="Top category" value={isLoading ? '…' : summary?.top_category ?? '—'} trend={summary ? 'most repeated signal' : 'waiting for API'} icon={<Globe2 size={18} />} />
         </div>
         <div className="mt-4 grid gap-4 lg:grid-cols-[1.15fr_.85fr]">
           <section className="rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5 sm:p-7" data-testid="card-priority-signals">
-            <div className="flex items-start justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">What people need</p><h2 className="mt-2 font-serif text-2xl font-bold tracking-[-.04em]">Priority signals</h2></div><button type="button" data-testid="button-export-priorities" className="rounded-lg p-2 text-[#698079] hover:bg-[#f0eadf]" aria-label="Export priority signals"><BarChart3 size={18} /></button></div>
+            <div className="flex items-start justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">What people need</p><h2 className="mt-2 font-serif text-2xl font-bold tracking-[-.04em]">Priority signals</h2></div><button type="button" onClick={() => exportRequests(requests)} data-testid="button-export-priorities" className="rounded-lg p-2 text-[#698079] hover:bg-[#f0eadf]" aria-label="Export priority signals"><BarChart3 size={18} /></button></div>
             <div className="mt-8 space-y-5">{livePriorities.map((priority) => <button type="button" key={priority.name} onClick={() => setActivePriority(priority.name)} data-testid={`button-priority-${priority.name.toLowerCase().replaceAll(' ', '-')}`} className={`block w-full text-left ${activePriority === priority.name ? '' : 'opacity-65'} transition-opacity`}><div className="mb-2 flex items-end justify-between"><span className="text-sm font-bold">{priority.name}</span><span className="text-xs text-[#698079]">{priority.share} <span className="ml-1 hidden sm:inline">{priority.count}</span></span></div><div className="h-3 overflow-hidden rounded-full bg-[#e7e1d6]"><div className="h-full rounded-full transition-all duration-500" style={{ width: priority.share, backgroundColor: priority.color }} /></div></button>)}</div>
             <div className="mt-7 flex items-center gap-2 border-t border-[#e5ded1] pt-5 text-xs text-[#698079]"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: livePriorities.find((p) => p.name === activePriority)?.color }} /> Showing {activePriority.toLowerCase()} as the active signal <ChevronRight size={13} className="ml-auto" /></div>
           </section>
@@ -536,12 +684,270 @@ function Dashboard() {
   );
 }
 
+function impactContext(request: CitizenRequest) {
+  const populationByLocation: Record<string, number> = {
+    'Rampur village': 5800,
+    'Kalyan block': 9200,
+    'Ward 10': 7400,
+    'Ward 12': 8100,
+    'Ward 9': 6900,
+    'Pune district': 12000,
+  };
+  const population = populationByLocation[request.location] ?? 5000;
+  const infrastructureGap = Math.min(95, 35 + (request.priority_score >= 75 ? 35 : 20) + (request.severity === 'High' ? 15 : 5));
+  const urgencyScore = request.urgency === 'Immediate' ? 95 : request.urgency === 'Soon' ? 78 : 52;
+  const demandScore = Math.min(100, 45 + request.similar_request_count * 4);
+  const impactFactor = Math.round((demandScore * 0.4) + (infrastructureGap * 0.35) + (urgencyScore * 0.25));
+  return { population, infrastructureGap, urgencyScore, demandScore, impactFactor, estimatedAffected: Math.round(population * impactFactor / 100) };
+}
+
+function SingleDashboard() {
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [requests, setRequests] = useState<CitizenRequest[]>([]);
+  const [selectedRequest, setSelectedRequest] = useState<CitizenRequest | null>(null);
+  const [analysis, setAnalysis] = useState<RequestAnalysis | null>(null);
+  const [text, setText] = useState('');
+  const [location, setLocation] = useState('');
+  const [language, setLanguage] = useState('en');
+  const [isListening, setIsListening] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [filters, setFilters] = useState({ district: 'All', category: 'All', priority: 'All', language: 'All' });
+  const [brief, setBrief] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadDashboard = async () => {
+      try {
+        const [nextSummary, nextRequests] = await Promise.all([getDashboardSummary(), listRequests()]);
+        if (!mounted) return;
+        setSummary(nextSummary);
+        setRequests(nextRequests);
+        setSelectedRequest((current) => nextRequests.find((request) => request.id === current?.id) ?? nextRequests[0] ?? null);
+        setError('');
+      } catch (nextError: unknown) {
+        if (mounted) setError(nextError instanceof Error ? nextError.message : 'Dashboard data is unavailable.');
+      }
+    };
+    void loadDashboard();
+    window.addEventListener('focus', loadDashboard);
+    return () => {
+      mounted = false;
+      window.removeEventListener('focus', loadDashboard);
+    };
+  }, []);
+
+  const districts = Array.from(new Set(requests.map((request) => request.location))).sort();
+  const categories = Array.from(new Set(requests.flatMap((request) => request.category.split(' + ')))).sort();
+  const filteredRequests = requests.filter((request) => (
+    (filters.district === 'All' || request.location === filters.district)
+    && (filters.category === 'All' || request.category.includes(filters.category))
+    && (filters.language === 'All' || request.language === filters.language)
+    && (filters.priority === 'All'
+      || (filters.priority === 'Critical' && request.priority_score >= 85)
+      || (filters.priority === 'High' && request.priority_score >= 70 && request.priority_score < 85)
+      || (filters.priority === 'Medium' && request.priority_score >= 50 && request.priority_score < 70)
+      || (filters.priority === 'Low' && request.priority_score < 50))
+  ));
+  const priorityColor = (score: number) => score >= 85 ? '#c95c4d' : score >= 70 ? '#df8e3d' : score >= 50 ? '#d3ae46' : '#5d9a85';
+  const priorityLabel = (score: number) => score >= 85 ? 'Critical' : score >= 70 ? 'High' : score >= 50 ? 'Medium' : 'Low';
+  const topPriorities = [...filteredRequests].sort((a, b) => b.priority_score - a.priority_score).slice(0, 3);
+  const hotspotGroups = Array.from(new Set(filteredRequests.map((request) => request.location))).map((place) => {
+    const placeRequests = filteredRequests.filter((request) => request.location === place);
+    return { location: place, request: placeRequests.sort((a, b) => b.priority_score - a.priority_score)[0], count: placeRequests.length };
+  }).sort((a, b) => b.request.priority_score - a.request.priority_score).slice(0, 6);
+  const categoryCounts = categories.map((category) => ({ name: category, count: filteredRequests.filter((request) => request.category.includes(category)).length })).filter((item) => item.count);
+  const languageCounts = ['en', 'hi'].map((code) => ({ name: code === 'hi' ? 'Hindi' : 'English', count: filteredRequests.filter((request) => request.language === code).length })).filter((item) => item.count);
+  const priorityCounts = ['Critical', 'High', 'Medium', 'Low'].map((name) => ({ name, count: filteredRequests.filter((request) => priorityLabel(request.priority_score) === name).length })).filter((item) => item.count);
+  const filterOptions: Array<[keyof typeof filters, string, string[]]> = [
+    ['district', 'District', districts],
+    ['category', 'Category', categories],
+    ['priority', 'Priority', ['Critical', 'High', 'Medium', 'Low']],
+    ['language', 'Language', ['en', 'hi']],
+  ];
+  const selectedImpact = selectedRequest ? impactContext(selectedRequest) : null;
+
+  const handleVoice = () => {
+    const speechWindow = window as Window & { SpeechRecognition?: new () => SpeechRecognizer; webkitSpeechRecognition?: new () => SpeechRecognizer };
+    const Recognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      setError('Voice input is not available in this browser. You can type your request instead.');
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event) => { setText(event.results[0][0].transcript); setIsListening(false); };
+    recognition.onerror = () => { setError('Voice input could not be captured. Please try typing your request.'); setIsListening(false); };
+    recognition.onend = () => setIsListening(false);
+    setError('');
+    setIsListening(true);
+    recognition.start();
+  };
+
+  const submitRequest = async () => {
+    if (!text.trim()) {
+      setError('Describe the development need before submitting.');
+      return;
+    }
+    setIsSubmitting(true);
+    setError('');
+    try {
+      const preview = await previewRequest({ text: text.trim(), location: location.trim() || undefined });
+      setAnalysis(preview);
+      const saved = await saveRequest({ text: text.trim(), location: location.trim() || undefined });
+      setAnalysis(saved);
+      setRequests((current) => [saved, ...current]);
+      setSelectedRequest(saved);
+      setText('');
+    } catch (nextError: unknown) {
+      setError(nextError instanceof Error ? nextError.message : 'The request could not be submitted.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const generateBrief = () => {
+    if (!selectedRequest) return;
+    setBrief(`Recommended Action: Prioritize a coordinated ${selectedRequest.category.toLowerCase()} response in ${selectedRequest.location}.\n\nWhy This Should Be Prioritized: ${selectedRequest.urgency} response is recommended because this signal has a ${selectedRequest.severity.toLowerCase()} severity and a priority score of ${selectedRequest.priority_score}/100.\n\nKey Evidence: ${selectedRequest.issue}. ${selectedRequest.similar_request_count || 1} similar citizen signal(s) were identified.\n\nCitizens Affected: ${Math.max(250, (selectedRequest.similar_request_count || 1) * 250)} estimated residents.`);
+  };
+
+  const copyBrief = async () => {
+    if (!brief) return;
+    await navigator.clipboard.writeText(brief);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  return (
+    <PageFrame>
+      <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mb-6 flex flex-col justify-between gap-3 md:flex-row md:items-end">
+          <div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-[#c77a52]">JanSetu AI / Civic intelligence workspace</p><h1 className="mt-2 font-serif text-3xl font-bold tracking-[-.05em] sm:text-4xl">Development needs dashboard</h1><p className="mt-2 text-sm text-[#698079]">Turn citizen signals into transparent, actionable priorities.</p></div>
+          <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#bcd1c4] bg-[#e9f1eb] px-3 py-2 text-[10px] font-bold text-[#315a58]"><Sparkles size={13} /> Demo / Synthetic Data</span>
+        </div>
+        {error && <div className="mb-5 rounded-xl border border-[#ead2a0] bg-[#fcf2d8] p-3 text-sm text-[#765821]" role="alert">{error}</div>}
+        <section className="mb-5 rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5 sm:p-6">
+          <div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">New citizen requests</p><h2 className="mt-1 font-serif text-2xl font-bold">Latest signals</h2></div><span className="text-xs text-[#698079]">Newest first · shared SQLite feed</span></div>
+          <div className="mt-4 divide-y divide-[#e5ded1]">{requests.slice(0, 3).map((request) => <button type="button" key={request.id} onClick={() => setSelectedRequest(request)} className="flex w-full flex-wrap items-center justify-between gap-3 py-3 text-left first:pt-0"><div className="min-w-0"><p className="truncate text-sm font-bold">{request.location} · {request.category}</p><p className="mt-1 truncate text-xs text-[#698079]">{request.text}</p></div><span className="rounded-full bg-[#e8eee7] px-3 py-1 text-[10px] font-bold text-[#52736c]">{request.language === 'hi' ? 'Hindi' : 'English'} · {request.urgency}</span></button>)}</div>
+        </section>
+        <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Kpi label="Total citizen requests" value={summary ? String(summary.total_requests) : '…'} trend="SQLite-backed signals" icon={<MessageSquare size={18} />} />
+          <Kpi label="High priority requests" value={summary ? String(summary.high_priority_requests) : '…'} trend="Score 75 and above" icon={<Target size={18} />} />
+          <Kpi label="Demand hotspots" value={summary ? String(summary.active_hotspots) : '…'} trend="High-demand locations" icon={<Map size={18} />} />
+          <Kpi label="Citizens affected" value={summary ? `${Math.max(summary.total_requests * 250, 0).toLocaleString()}+` : '…'} trend="Synthetic estimate" icon={<Users size={18} />} />
+        </section>
+        <section className="mb-5 grid gap-3 sm:grid-cols-2">
+          <Kpi label="Work done" value={summary ? String(summary.completed_requests) : '…'} trend="Completed records" icon={<Check size={18} />} />
+          <Kpi label="Work pending" value={summary ? String(summary.pending_requests) : '…'} trend="Awaiting action" icon={<Clock3 size={18} />} />
+        </section>
+        <div className="mb-5 grid min-w-0 gap-5 xl:grid-cols-[1.2fr_.8fr]">
+          <section className="min-w-0 rounded-2xl bg-[#17383e] p-5 text-[#f8f0df] sm:p-6"><div className="flex items-start justify-between"><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#f7c75d]">Demand hotspot map</p><h2 className="mt-1 font-serif text-2xl font-bold">Where action is needed</h2></div><MapPin className="shrink-0 text-[#f7c75d]" size={21} /></div><div className="relative mt-5 grid min-w-0 min-h-[300px] grid-cols-2 gap-3 overflow-hidden rounded-xl border border-[#5e7c78]/45 bg-[#21494d] p-4 sm:grid-cols-3">{hotspotGroups.map(({ location: place, request, count }, index) => <button type="button" key={place} onClick={() => { setSelectedRequest(request); setBrief(''); }} className="group relative flex min-h-[110px] min-w-0 flex-col justify-between rounded-xl border border-white/10 bg-[#17383e]/70 p-3 text-left hover:border-[#f7c75d]"><span className="absolute right-3 top-3 h-3 w-3 rounded-full" style={{ backgroundColor: priorityColor(request.priority_score) }} /><span className="truncate text-sm font-bold">{place}</span><span className="truncate text-xs text-[#b8d0c6]">{request.category}</span><span className="text-[11px] text-[#f7c75d]">{count} request{count === 1 ? '' : 's'} · {priorityLabel(request.priority_score)}</span></button>)}{!hotspotGroups.length && <p className="col-span-full self-center text-center text-sm text-[#b8d0c6]">No hotspots match the selected filters.</p>}</div><p className="mt-3 text-[11px] text-[#b8d0c6]">Illustrative OpenStreetMap-ready hotspot view · red critical · orange high · yellow medium · green low</p></section>
+          <section className="min-w-0 rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5 sm:p-6"><div className="flex items-start justify-between"><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">Top development priorities</p><h2 className="mt-1 font-serif text-2xl font-bold">Ranked signals</h2></div><BarChart3 className="shrink-0 text-[#c77a52]" size={20} /></div><div className="mt-4 space-y-3">{topPriorities.map((request, index) => <button type="button" key={request.id} onClick={() => { setSelectedRequest(request); setBrief(''); }} className={`w-full rounded-xl border p-3 text-left ${selectedRequest?.id === request.id ? 'border-[#52736c] bg-[#e9f1eb]' : 'border-[#e5ded1] bg-[#f9f5ed] hover:border-[#b4c5bb]'}`}><div className="flex min-w-0 gap-3"><span className="shrink-0 font-serif text-xl font-bold text-[#c77a52]">#{index + 1}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{request.location} · {request.category}</p><p className="mt-1 line-clamp-1 text-xs text-[#698079]">{request.issue}</p><p className="mt-2 text-[11px] font-bold" style={{ color: priorityColor(request.priority_score) }}>{request.priority_score}/100 · {priorityLabel(request.priority_score)} · {request.similar_request_count} similar</p></div></div></button>)}</div></section>
+        </div>
+        <section className="mb-5 rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5 sm:p-6"><div className="flex flex-col justify-between gap-4 md:flex-row md:items-end"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#52736c]">Filters</p><h2 className="mt-1 font-serif text-2xl font-bold">Focus the signal</h2></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{filterOptions.map(([key, label, options]) => <select key={key} value={filters[key]} onChange={(event) => setFilters({ ...filters, [key]: event.target.value })} className="rounded-lg border border-[#cfd8d0] bg-[#f9f5ed] px-2 py-2 text-xs"><option value="All">{label}: All</option>{options.map((option) => <option key={option} value={option}>{option === 'en' ? 'English' : option === 'hi' ? 'Hindi' : option}</option>)}</select>)}</div></div></section>
+        <div className="mb-5 grid gap-5 lg:grid-cols-[.9fr_1.1fr]">
+          <section className="rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5 sm:p-6"><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">AI policy recommendation</p><h2 className="mt-1 font-serif text-2xl font-bold">AI-Assisted Policy Recommendation</h2>{selectedRequest && selectedImpact ? <><div className="mt-4 rounded-xl bg-[#f0eadf] p-4 text-sm leading-6 text-[#315a58]"><p><b>Location:</b> {selectedRequest.location} · <b>Category:</b> {selectedRequest.category}</p><p className="mt-2"><b>Related requests:</b> {selectedRequest.similar_request_count || 1} · <b>Estimated population potentially affected:</b> ~{selectedImpact.estimatedAffected.toLocaleString()}</p><p className="mt-2"><b>Infrastructure gap:</b> {selectedImpact.infrastructureGap}% · {selectedRequest.issue}</p><p className="mt-2"><b>Urgency:</b> {selectedRequest.urgency} · <b>Priority:</b> {selectedRequest.priority_score}/100</p><details className="mt-3 rounded-lg border border-[#d9d2c4] bg-[#f9f5ed] p-3 text-xs"><summary className="cursor-pointer font-bold">How is this calculated?</summary><div className="mt-2 space-y-1"><p>Local population: {selectedImpact.population.toLocaleString()} synthetic estimate</p><p>Demand score: {selectedImpact.demandScore}/100 · Urgency score: {selectedImpact.urgencyScore}/100</p><p>Impact factor: {selectedImpact.impactFactor}%</p><p className="mt-2 text-[#698079]">Prototype estimate based on demographic, citizen-demand and infrastructure signals. Not a verified census measurement.</p></div></details></div>{brief && <pre className="mt-3 whitespace-pre-wrap rounded-xl border border-[#d9d2c4] bg-[#f9f5ed] p-4 text-xs leading-5 text-[#315a58]">{brief}</pre>}<div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={generateBrief} className="rounded-xl bg-[#17383e] px-4 py-3 text-sm font-bold text-[#f8f0df]">Generate Policy Brief</button>{brief && <button type="button" onClick={copyBrief} className="rounded-xl border border-[#cfd8d0] px-4 py-3 text-sm font-bold">{copied ? 'Copied' : 'Copy brief'}</button>}</div><p className="mt-3 text-[10px] text-[#8ba098]">AI-assisted recommendation · Prototype</p></> : <p className="mt-5 text-sm text-[#698079]">Select a hotspot or priority to generate a recommendation.</p>}</section>
+          <section className="rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5 sm:p-6"><div className="flex items-start justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#52736c]">Compact analytics</p><h2 className="mt-1 font-serif text-2xl font-bold">Signal distribution</h2></div><Activity size={20} className="text-[#52736c]" /></div><div className="mt-5 grid gap-5 sm:grid-cols-3">{[['Requests by category', categoryCounts], ['Priority distribution', priorityCounts], ['Language distribution', languageCounts]].map(([title, values]) => <div key={title as string}><p className="mb-3 text-xs font-bold text-[#315a58]">{title as string}</p><div className="space-y-2">{(values as { name: string; count: number }[]).map((item) => <div key={item.name}><div className="flex justify-between text-[11px] text-[#698079]"><span className="truncate pr-2">{item.name}</span><b>{item.count}</b></div><div className="mt-1 h-2 rounded-full bg-[#e7e1d6]"><div className="h-full rounded-full bg-[#e4a83c]" style={{ width: `${Math.max(8, (item.count / Math.max(filteredRequests.length, 1)) * 100)}%` }} /></div></div>)}</div></div>)}</div></section>
+        </div>
+      </main>
+    </PageFrame>
+  );
+}
+
 function Kpi({ label, value, trend, icon }: { label: string; value: string; trend: string; icon: ReactNode }) {
   return <div className="rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5"><div className="flex items-center justify-between text-[#c77a52]"><span className="text-xs font-bold uppercase tracking-[.12em] text-[#698079]">{label}</span>{icon}</div><div className="mt-5 font-serif text-3xl font-bold tracking-[-.05em]">{value}</div><div className="mt-1 text-xs font-semibold text-[#5d9a85]">{trend}</div></div>;
 }
 
 function Router() {
-  return <RoutedErrorBoundary><Switch><Route path="/" component={Home} /><Route path="/citizen" component={Citizen} /><Route path="/dashboard" component={Dashboard} /><Route component={NotFound} /></Switch></RoutedErrorBoundary>;
+  return <RoutedErrorBoundary><Switch>
+    <Route path="/" component={PortalChooser} />
+    <Route path="/citizen">{() => <ProtectedPortal role="citizen"><Citizen /></ProtectedPortal>}</Route>
+    <Route path="/government">{() => <ProtectedPortal role="government"><SingleDashboard /></ProtectedPortal>}</Route>
+    <Route path="/dashboard">{() => <ProtectedPortal role="government"><SingleDashboard /></ProtectedPortal>}</Route>
+    <Route component={NotFound} />
+  </Switch></RoutedErrorBoundary>;
+}
+
+type PortalRole = 'citizen' | 'government';
+
+function PortalChooser() {
+  return (
+    <PageFrame>
+      <main className="mx-auto max-w-4xl px-5 py-16 lg:py-24">
+        <div className="mx-auto max-w-2xl text-center">
+          <span className="inline-flex rounded-full bg-[#e8eee7] px-3 py-2 text-[10px] font-bold uppercase tracking-[.18em] text-[#52736c]">JanSetu AI</span>
+          <h1 className="mt-5 font-serif text-5xl font-bold tracking-[-.06em] sm:text-6xl">Choose your portal</h1>
+          <p className="mt-4 text-sm leading-6 text-[#698079]">From citizen voice to development intelligence and action.</p>
+        </div>
+        <div className="mt-10 grid gap-4 md:grid-cols-2">
+          <Link href="/citizen" className="rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-6 transition hover:-translate-y-1 hover:border-[#52736c]">
+            <Mic className="text-[#c77a52]" size={24} />
+            <h2 className="mt-5 font-serif text-2xl font-bold">Citizen</h2>
+            <p className="mt-2 text-sm leading-6 text-[#698079]">Report a local development need using your voice or text.</p>
+            <span className="mt-6 inline-flex rounded-xl bg-[#17383e] px-4 py-3 text-sm font-bold text-[#f8f0df]">Open citizen portal <ArrowRight size={15} className="ml-2" /></span>
+          </Link>
+          <Link href="/government" className="rounded-2xl border border-[#17383e] bg-[#17383e] p-6 text-[#f8f0df] transition hover:-translate-y-1">
+            <Landmark className="text-[#f7c75d]" size={24} />
+            <h2 className="mt-5 font-serif text-2xl font-bold">Government</h2>
+            <p className="mt-2 text-sm leading-6 text-[#b8d0c6]">Explore hotspots, priorities, population impact and recommendations.</p>
+            <span className="mt-6 inline-flex rounded-xl bg-[#f7c75d] px-4 py-3 text-sm font-bold text-[#17383e]">Open intelligence dashboard <ArrowRight size={15} className="ml-2" /></span>
+          </Link>
+        </div>
+        <p className="mt-8 text-center text-[11px] text-[#8ba098]">Demo Mode · Synthetic Data · Prototype authentication</p>
+      </main>
+    </PageFrame>
+  );
+}
+
+function LoginPage({ role }: { role: PortalRole }) {
+  const [identity, setIdentity] = useState('');
+  const [secret, setSecret] = useState('');
+  const [error, setError] = useState('');
+  const isGovernment = role === 'government';
+
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const valid = isGovernment
+      ? (identity === 'gov@jansetu.demo' || identity === 'admin') && secret === 'jansetu123'
+      : /^\d{6}$/.test(secret);
+    if (!valid) {
+      setError(isGovernment ? 'Use gov@jansetu.demo / jansetu123 for the demo.' : 'Enter the demo OTP 123456.');
+      return;
+    }
+    localStorage.setItem('jansetu-auth-role', role);
+    window.location.assign(isGovernment ? '/government' : '/citizen');
+  };
+
+  return (
+    <PageFrame>
+      <main className="mx-auto max-w-md px-5 py-16">
+        <Link href="/" className="text-xs font-bold text-[#52736c]">← Choose another portal</Link>
+        <div className="mt-8 rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-6 sm:p-8">
+          <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">{isGovernment ? 'Government authentication' : 'Citizen authentication'}</p>
+          <h1 className="mt-2 font-serif text-3xl font-bold">{isGovernment ? 'Sign in to intelligence' : 'Sign in to report a need'}</h1>
+          <p className="mt-2 text-sm leading-6 text-[#698079]">{isGovernment ? 'Demo access protects the government dashboard from citizen accounts.' : 'Use any mobile number with the demo OTP 123456.'}</p>
+          <form onSubmit={submit} className="mt-6 space-y-4">
+            <label className="block text-xs font-bold text-[#315a58]">{isGovernment ? 'Government ID / official email' : 'Mobile number'}<input value={identity} onChange={(event) => setIdentity(event.target.value)} className="mt-2 w-full rounded-xl border border-[#cfd8d0] bg-[#f9f5ed] px-3 py-3 text-sm outline-none focus:border-[#52736c]" placeholder={isGovernment ? 'gov@jansetu.demo' : '9876543210'} required /></label>
+            <label className="block text-xs font-bold text-[#315a58]">{isGovernment ? 'Password' : 'Demo OTP'}<input value={secret} onChange={(event) => setSecret(event.target.value)} type={isGovernment ? 'password' : 'text'} className="mt-2 w-full rounded-xl border border-[#cfd8d0] bg-[#f9f5ed] px-3 py-3 text-sm outline-none focus:border-[#52736c]" placeholder={isGovernment ? 'jansetu123' : '123456'} required /></label>
+            {error && <p className="rounded-xl bg-[#f4ddd4] p-3 text-xs text-[#994e3d]" role="alert">{error}</p>}
+            <button type="submit" className="w-full rounded-xl bg-[#17383e] px-4 py-3 text-sm font-bold text-[#f8f0df]">{isGovernment ? 'Open government dashboard' : 'Continue to citizen dashboard'}</button>
+          </form>
+        </div>
+      </main>
+    </PageFrame>
+  );
+}
+
+function ProtectedPortal({ role, children }: { role: PortalRole; children: ReactNode }) {
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  useEffect(() => {
+    setAuthenticated(localStorage.getItem('jansetu-auth-role') === role);
+  }, [role]);
+  if (authenticated === null) return <PageFrame><div className="mx-auto max-w-4xl px-5 py-16 text-sm text-[#698079]">Loading portal…</div></PageFrame>;
+  return authenticated ? <>{children}</> : <LoginPage role={role} />;
 }
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {

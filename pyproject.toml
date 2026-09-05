@@ -1,7 +1,7 @@
 [project]
-name = "repl-nix-workspace"
+name = "jan-setu"
 version = "0.1.0"
-description = "Add your description here"
+description = "JanSetu AI civic intelligence platform"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.141.1",

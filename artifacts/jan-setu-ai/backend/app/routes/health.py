@@ -12,5 +12,5 @@ def health_check() -> HealthResponse:
     return HealthResponse(
         status="ok",
         service=settings.app_name,
-        ai_provider=settings.ai_provider,
+        ai_provider=settings.active_ai_provider,
     )

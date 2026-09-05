@@ -18,7 +18,21 @@ class Settings:
             str(ARTIFACT_ROOT / "data" / "jan-setu-ai.db"),
         )
     )
-    ai_provider: str = os.getenv("AI_PROVIDER", "mock")
+    ai_provider: str = os.getenv("AI_PROVIDER", "auto")
+    llm_api_url: str = os.getenv(
+        "LLM_API_URL", "https://api.openai.com/v1/chat/completions"
+    )
+    llm_api_key: str = os.getenv("LLM_API_KEY", "")
+    llm_model: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    llm_timeout_seconds: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "20"))
+
+    @property
+    def active_ai_provider(self) -> str:
+        if self.ai_provider == "mock":
+            return "rules"
+        if self.ai_provider == "llm" or self.llm_api_key:
+            return "llm"
+        return "rules"
 
 
 settings = Settings()

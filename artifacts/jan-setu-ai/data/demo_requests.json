@@ -26,7 +26,47 @@
     "location": "Kalyan block",
     "issue": "Our local health centre needs essential medicines and a regular nurse.",
     "priority_score": 82,
-    "status": "review",
+    "status": "completed",
     "created_at": "2026-09-04T15:10:00"
+  },
+  {
+    "text": "Streetlights are not working near the market and the road feels unsafe at night.",
+    "language": "en",
+    "category": "Electricity",
+    "location": "Pune district",
+    "issue": "Streetlights are not working near the market and the road feels unsafe at night.",
+    "priority_score": 76,
+    "status": "new",
+    "created_at": "2026-09-05T09:00:00"
+  },
+  {
+    "text": "The government school needs two more teachers and usable classroom furniture.",
+    "language": "en",
+    "category": "Education",
+    "location": "Nashik district",
+    "issue": "The government school needs two more teachers and usable classroom furniture.",
+    "priority_score": 68,
+    "status": "new",
+    "created_at": "2026-09-05T09:10:00"
+  },
+  {
+    "text": "The public bus does not reach our village after 6 PM.",
+    "language": "en",
+    "category": "Public Transport",
+    "location": "Jaipur district",
+    "issue": "The public bus does not reach our village after 6 PM.",
+    "priority_score": 62,
+    "status": "new",
+    "created_at": "2026-09-05T09:20:00"
+  },
+  {
+    "text": "The community toilet is closed and waste collection has stopped.",
+    "language": "en",
+    "category": "Sanitation",
+    "location": "Bhopal district",
+    "issue": "The community toilet is closed and waste collection has stopped.",
+    "priority_score": 72,
+    "status": "new",
+    "created_at": "2026-09-05T09:30:00"
   }
 ]

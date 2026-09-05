@@ -222,7 +222,7 @@ wheels = [
 ]
 
 [[package]]
-name = "repl-nix-workspace"
+name = "jan-setu"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

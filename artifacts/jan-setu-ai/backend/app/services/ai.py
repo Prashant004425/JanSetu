@@ -1,4 +1,9 @@
+import json
 import re
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+from ..config import settings
 
 
 CATEGORY_RULES = {
@@ -45,6 +50,22 @@ CATEGORY_RULES = {
         "बिजली",
         "रोशनी",
     ),
+    "Sanitation": (
+        "sanitation",
+        "waste",
+        "garbage",
+        "toilet",
+        "स्वच्छता",
+        "कचरा",
+        "शौचालय",
+    ),
+    "Public Transport": (
+        "public transport",
+        "bus",
+        "transit",
+        "परिवहन",
+        "बस सेवा",
+    ),
 }
 
 LOCATION_HINTS = (
@@ -89,7 +110,10 @@ def extract_location(text: str, provided_location: str | None) -> str:
     words = text.strip().split()
     for index, word in enumerate(words[:-1]):
         if word.casefold().strip(",.") in LOCATION_HINTS:
-            return f"{word.strip(',.' )} {words[index + 1].strip(',.')}"
+            candidate = f"{word.strip(',.' )} {words[index + 1].strip(',.')}"
+            if candidate.casefold() in {"village road", "our village", "गांव में", "गांव का", "गांव की"}:
+                continue
+            return candidate
     return "Location to be verified"
 
 
@@ -174,7 +198,9 @@ def label_for_score(score: int) -> str:
     return "Monitor"
 
 
-def analyze_request(text: str, location: str | None = None) -> dict[str, str | float | int]:
+def analyze_with_rules(
+    text: str, location: str | None = None
+) -> dict[str, str | float | int]:
     language = detect_language(text)
     categories = detect_categories(text)
     category = " + ".join(categories)
@@ -203,3 +229,83 @@ def analyze_request(text: str, location: str | None = None) -> dict[str, str | f
         "priority_score": priority_score,
         "priority_label": label_for_score(priority_score),
     }
+
+
+LLM_FIELDS = (
+    "language",
+    "translated_text",
+    "understanding",
+    "categories",
+    "category",
+    "location",
+    "issue",
+    "urgency",
+    "severity",
+    "confidence",
+    "priority_score",
+    "priority_label",
+)
+
+
+def _llm_analysis(
+    text: str, location: str | None
+) -> dict[str, str | float | int] | None:
+    prompt = {
+        "role": "user",
+        "content": (
+            "Analyze this citizen development request. Return only valid JSON with "
+            "these keys: language, translated_text, understanding, categories "
+            "(array), category, location, issue, urgency, severity, confidence "
+            "(number 0 to 1), priority_score (integer 0 to 100), priority_label. "
+            "Use concise English for normalized fields. Preserve the original meaning. "
+            f"Provided location: {location or 'not provided'}\nRequest: {text}"
+        ),
+    }
+    body = json.dumps(
+        {
+            "model": settings.llm_model,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a civic-intelligence analyst for India.",
+                },
+                prompt,
+            ],
+        }
+    ).encode("utf-8")
+    request = Request(
+        settings.llm_api_url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {settings.llm_api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=settings.llm_timeout_seconds) as response:
+            payload = json.load(response)
+        content = payload["choices"][0]["message"]["content"]
+        result = json.loads(content)
+    except (HTTPError, URLError, TimeoutError, KeyError, IndexError, TypeError, ValueError):
+        return None
+
+    if not all(field in result for field in LLM_FIELDS):
+        return None
+    if (
+        not isinstance(result["categories"], list)
+        or not 0 <= float(result["confidence"]) <= 1
+        or not 0 <= int(result["priority_score"]) <= 100
+    ):
+        return None
+    return result
+
+
+def analyze_request(text: str, location: str | None = None) -> dict[str, str | float | int]:
+    if settings.active_ai_provider == "llm":
+        llm_result = _llm_analysis(text, location)
+        if llm_result is not None:
+            return llm_result
+    return analyze_with_rules(text, location)

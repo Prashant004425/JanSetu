@@ -38,6 +38,8 @@ class CitizenRequest(CitizenRequestInput, RequestAnalysis):
 
 class DashboardSummary(BaseModel):
     total_requests: int
+    completed_requests: int
+    pending_requests: int
     high_priority_requests: int
     active_hotspots: int
     top_category: str

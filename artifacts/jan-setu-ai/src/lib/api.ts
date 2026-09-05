@@ -23,6 +23,8 @@ export type CitizenRequest = RequestAnalysis & {
 
 export type DashboardSummary = {
   total_requests: number;
+  completed_requests: number;
+  pending_requests: number;
   high_priority_requests: number;
   active_hotspots: number;
   top_category: string;
@@ -48,7 +50,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    const message = await response.text();
+    const body = await response.text();
+    let message = body;
+    try {
+      const parsed = JSON.parse(body) as { detail?: string };
+      message = parsed.detail ?? body;
+    } catch {
+      // Keep the plain response body when the server did not return JSON.
+    }
     throw new Error(message || `Request failed with status ${response.status}`);
   }
 
