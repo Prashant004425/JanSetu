@@ -7,6 +7,7 @@ from .config import settings
 from .db import initialize_database
 from .routes.health import router as health_router
 from .routes.requests import router as requests_router
+from .routes.government import router as government_router
 
 
 @asynccontextmanager
@@ -33,6 +34,7 @@ app.add_middleware(
 for api_prefix in ("/api", "/jan-setu-api/api"):
     app.include_router(health_router, prefix=api_prefix)
     app.include_router(requests_router, prefix=api_prefix)
+    app.include_router(government_router, prefix=api_prefix)
 
 
 @app.get("/")

@@ -31,6 +31,7 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
+  Tag,
   Users,
   Volume2,
   X,
@@ -40,9 +41,14 @@ import {
   type DashboardSummary,
   type RequestAnalysis,
   getDashboardSummary,
+  getWorkSummary,
+  listGovernmentRequests,
   listRequests,
   previewRequest,
   saveRequest,
+  updateRequestStatus,
+  updateGovernmentProgress,
+  updateGovernmentStatus,
 } from '@/lib/api';
 import {
   Link,
@@ -53,6 +59,30 @@ import {
 } from 'wouter';
 
 const queryClient = new QueryClient();
+
+const languageNames: Record<string, string> = {
+  en: 'English',
+  hi: 'Hindi',
+  bn: 'Bengali',
+  te: 'Telugu',
+  mr: 'Marathi',
+  ta: 'Tamil',
+  gu: 'Gujarati',
+  kn: 'Kannada',
+  ml: 'Malayalam',
+  pa: 'Punjabi',
+  or: 'Odia',
+  ur: 'Urdu',
+};
+
+function languageName(code: string) {
+  return languageNames[code] ?? code.toUpperCase();
+}
+
+function createdAtValue(value: string) {
+  const normalized = value.includes('T') ? value : `${value.replace(' ', 'T')}Z`;
+  return new Date(normalized).getTime();
+}
 
 const navItems = [
   { href: '/', label: 'Overview' },
@@ -237,8 +267,9 @@ function AnalysisDetails({ analysis, compact = false }: { analysis: RequestAnaly
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <DetailItem icon={<LanguagesIcon />} label="Language detected" value={analysis.language === 'hi' ? 'Hindi' : 'English'} testId="text-detected-language" />
-        <DetailItem icon={<MapPin size={15} />} label="Location extracted" value={analysis.location} testId="text-extracted-location" />
+        <DetailItem icon={<LanguagesIcon />} label="Language detected" value={languageName(analysis.language)} testId="text-detected-language" />
+        <DetailItem icon={<MapPin size={15} />} label="Location extracted" value={analysis.location ?? 'Not provided'} testId="text-extracted-location" />
+        <DetailItem icon={<Tag size={15} />} label="Subcategory" value={analysis.subcategory} testId="text-subcategory" />
         <div className="rounded-xl border border-[#d9d2c4] bg-[#fcf8f1] p-3">
           <p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#8ba098]">Urgency</p>
           <p className="mt-2 flex items-center gap-2 text-sm font-bold text-[#17383e]" data-testid="text-urgency"><Clock3 size={15} className="text-[#c77a52]" />{analysis.urgency}</p>
@@ -320,6 +351,7 @@ type SpeechRecognizer = {
 function Citizen() {
   const [text, setText] = useState('');
   const [location, setLocation] = useState('');
+  const [language, setLanguage] = useState('en');
   const [submitted, setSubmitted] = useState(false);
   const [analysis, setAnalysis] = useState<RequestAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -335,9 +367,14 @@ function Citizen() {
   const sample = 'The streetlights on our lane have not worked for two weeks.';
 
   useEffect(() => {
-    listRequests()
-      .then((nextRequests) => setMyRequests(nextRequests.slice(0, 5)))
-      .catch(() => setMyRequests([]));
+    const refreshRequests = () => {
+      listRequests()
+        .then((nextRequests) => setMyRequests(nextRequests.slice(0, 5)))
+        .catch(() => setMyRequests([]));
+    };
+    refreshRequests();
+    window.addEventListener('focus', refreshRequests);
+    return () => window.removeEventListener('focus', refreshRequests);
   }, [submitted]);
 
   const analyzeText = async (requestText: string, requestLocation: string) => {
@@ -347,9 +384,9 @@ function Citizen() {
     setApiError('');
     setAnalysis(null);
     try {
-      const nextAnalysis = await previewRequest({ text: requestText.trim(), location: requestLocation.trim() || undefined });
+      const nextAnalysis = await previewRequest({ text: requestText.trim(), location: requestLocation.trim() || undefined, selected_language: language });
       setAnalysis(nextAnalysis);
-      if (!requestLocation.trim() && nextAnalysis.location === 'Location to be verified') {
+      if (!requestLocation.trim() && !nextAnalysis.location) {
         setMissingQuestion('आप किस गांव या इलाके से हैं?');
         setFlowState('missing_information');
       } else {
@@ -374,7 +411,7 @@ function Citizen() {
     setFlowState('submitting');
     setApiError('');
     try {
-      const savedRequest = await saveRequest({ text: text.trim(), location: location.trim() || undefined });
+      const savedRequest = await saveRequest({ text: text.trim(), location: location.trim() || undefined, selected_language: language });
       setAnalysis(savedRequest);
       setSubmitted(true);
       setFlowState('submitted');
@@ -404,7 +441,7 @@ function Citizen() {
     recognitionRef.current?.stop();
     const recognition = new Recognition();
     recognitionRef.current = recognition;
-    recognition.lang = 'hi-IN';
+    recognition.lang = `${language}-IN`;
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
     recognition.onstart = () => {
@@ -449,7 +486,7 @@ function Citizen() {
     setFlowState('processing_followup');
     setApiError('');
     try {
-      const nextAnalysis = await previewRequest({ text: text.trim(), location: nextLocation.trim() });
+      const nextAnalysis = await previewRequest({ text: text.trim(), location: nextLocation.trim(), selected_language: language });
       setAnalysis(nextAnalysis);
       setFlowState('confirming');
     } catch (error) {
@@ -485,6 +522,10 @@ function Citizen() {
               <>
                 <div className="mb-5 flex items-start justify-between"><div><label htmlFor="request" className="text-lg font-bold text-[#17383e]">Share your request</label><p className="mt-1 text-xs text-[#698079]">Write as much or as little as you like.</p></div><span className="rounded-full bg-[#e8eee7] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#52736c]">Step 1 of 3</span></div>
                 <textarea id="request" value={text} maxLength={500} onChange={(event) => setText(event.target.value)} data-testid="input-citizen-request" placeholder="For example: The handpump near our anganwadi has been dry for three weeks..." className="min-h-[180px] w-full resize-none rounded-xl border border-[#cfd8d0] bg-[#f9f5ed] p-4 text-[15px] leading-7 text-[#17383e] outline-none transition-colors placeholder:text-[#9aaea5] focus:border-[#52736c] focus:ring-4 focus:ring-[#dce9df]" />
+                <label htmlFor="speech-language" className="mt-4 block text-xs font-bold uppercase tracking-[.14em] text-[#52736c]">Voice language</label>
+                <select id="speech-language" value={language} onChange={(event) => setLanguage(event.target.value)} className="mt-2 w-full rounded-xl border border-[#cfd8d0] bg-[#f9f5ed] px-3 py-3 text-sm text-[#17383e]">
+                  {Object.entries(languageNames).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+                </select>
                 <div className="mt-4"><label htmlFor="location" className="text-xs font-bold uppercase tracking-[.14em] text-[#52736c]">Where is this happening? <span className="font-normal normal-case tracking-normal text-[#8ba098]">(optional)</span></label><div className="mt-2 flex items-center gap-2 rounded-xl border border-[#cfd8d0] bg-[#f9f5ed] px-3 focus-within:border-[#52736c]"><MapPin size={16} className="text-[#8ba098]" /><input id="location" value={location} onChange={(event) => setLocation(event.target.value)} data-testid="input-citizen-location" placeholder="Ward, village, block or landmark" className="w-full bg-transparent py-3 text-sm text-[#17383e] outline-none placeholder:text-[#9aaea5]" /></div></div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><button type="button" data-testid="button-use-example" onClick={() => setText(sample)} className="text-xs font-bold text-[#52736c] underline underline-offset-4">Use a sample request</button><span className="text-[11px] text-[#91a49d]">{text.length}/500</span></div>
                 <div className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto]"><button type="button" data-testid="button-voice-input" onClick={() => handleVoice('initial')} className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-bold transition-colors ${isListening ? 'border-[#e4a83c] bg-[#fcf2d8] text-[#765821]' : 'border-[#cfd8d0] text-[#315a58] hover:border-[#52736c] hover:bg-[#eef2eb]'}`}><Mic size={17} /> {isListening ? 'Listening…' : 'Add by voice'}</button><button type="button" disabled={!text.trim() || isAnalyzing} data-testid="button-continue-request" onClick={handleAnalyze} className="group flex items-center justify-center gap-2 rounded-xl bg-[#17383e] px-6 py-3 text-sm font-bold text-[#f8f0df] transition-all hover:bg-[#28565a] disabled:cursor-not-allowed disabled:opacity-40">{isAnalyzing ? 'Understanding…' : 'Continue'} {!isAnalyzing && <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />}</button></div>
@@ -693,7 +734,7 @@ function impactContext(request: CitizenRequest) {
     'Ward 9': 6900,
     'Pune district': 12000,
   };
-  const population = populationByLocation[request.location] ?? 5000;
+  const population = (request.location ? populationByLocation[request.location] : undefined) ?? 5000;
   const infrastructureGap = Math.min(95, 35 + (request.priority_score >= 75 ? 35 : 20) + (request.severity === 'High' ? 15 : 5));
   const urgencyScore = request.urgency === 'Immediate' ? 95 : request.urgency === 'Soon' ? 78 : 52;
   const demandScore = Math.min(100, 45 + request.similar_request_count * 4);
@@ -738,7 +779,7 @@ function SingleDashboard() {
     };
   }, []);
 
-  const districts = Array.from(new Set(requests.map((request) => request.location))).sort();
+  const districts = Array.from(new Set(requests.map((request) => request.location).filter((value): value is string => Boolean(value)))).sort();
   const categories = Array.from(new Set(requests.flatMap((request) => request.category.split(' + ')))).sort();
   const filteredRequests = requests.filter((request) => (
     (filters.district === 'All' || request.location === filters.district)
@@ -752,19 +793,19 @@ function SingleDashboard() {
   ));
   const priorityColor = (score: number) => score >= 85 ? '#c95c4d' : score >= 70 ? '#df8e3d' : score >= 50 ? '#d3ae46' : '#5d9a85';
   const priorityLabel = (score: number) => score >= 85 ? 'Critical' : score >= 70 ? 'High' : score >= 50 ? 'Medium' : 'Low';
-  const topPriorities = [...filteredRequests].sort((a, b) => b.priority_score - a.priority_score).slice(0, 3);
+  const topPriorities = [...filteredRequests].sort((a, b) => b.priority_score - a.priority_score || createdAtValue(b.created_at) - createdAtValue(a.created_at)).slice(0, 3);
   const hotspotGroups = Array.from(new Set(filteredRequests.map((request) => request.location))).map((place) => {
     const placeRequests = filteredRequests.filter((request) => request.location === place);
-    return { location: place, request: placeRequests.sort((a, b) => b.priority_score - a.priority_score)[0], count: placeRequests.length };
-  }).sort((a, b) => b.request.priority_score - a.request.priority_score).slice(0, 6);
+    return { location: place, request: placeRequests.sort((a, b) => b.priority_score - a.priority_score || createdAtValue(b.created_at) - createdAtValue(a.created_at))[0], count: placeRequests.length };
+  }).sort((a, b) => b.request.priority_score - a.request.priority_score || createdAtValue(b.request.created_at) - createdAtValue(a.request.created_at)).slice(0, 6);
   const categoryCounts = categories.map((category) => ({ name: category, count: filteredRequests.filter((request) => request.category.includes(category)).length })).filter((item) => item.count);
-  const languageCounts = ['en', 'hi'].map((code) => ({ name: code === 'hi' ? 'Hindi' : 'English', count: filteredRequests.filter((request) => request.language === code).length })).filter((item) => item.count);
+  const languageCounts = Object.keys(languageNames).map((code) => ({ name: languageNames[code], count: filteredRequests.filter((request) => request.language === code).length })).filter((item) => item.count);
   const priorityCounts = ['Critical', 'High', 'Medium', 'Low'].map((name) => ({ name, count: filteredRequests.filter((request) => priorityLabel(request.priority_score) === name).length })).filter((item) => item.count);
   const filterOptions: Array<[keyof typeof filters, string, string[]]> = [
     ['district', 'District', districts],
     ['category', 'Category', categories],
     ['priority', 'Priority', ['Critical', 'High', 'Medium', 'Low']],
-    ['language', 'Language', ['en', 'hi']],
+    ['language', 'Language', Object.keys(languageNames)],
   ];
   const selectedImpact = selectedRequest ? impactContext(selectedRequest) : null;
 
@@ -776,7 +817,7 @@ function SingleDashboard() {
       return;
     }
     const recognition = new Recognition();
-    recognition.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
+    recognition.lang = `${language}-IN`;
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
     recognition.onresult = (event) => { setText(event.results[0][0].transcript); setIsListening(false); };
@@ -795,11 +836,12 @@ function SingleDashboard() {
     setIsSubmitting(true);
     setError('');
     try {
-      const preview = await previewRequest({ text: text.trim(), location: location.trim() || undefined });
+      const preview = await previewRequest({ text: text.trim(), location: location.trim() || undefined, selected_language: language });
       setAnalysis(preview);
-      const saved = await saveRequest({ text: text.trim(), location: location.trim() || undefined });
+      const saved = await saveRequest({ text: text.trim(), location: location.trim() || undefined, selected_language: language });
       setAnalysis(saved);
-      setRequests((current) => [saved, ...current]);
+      const refreshedRequests = await listRequests();
+      setRequests(refreshedRequests);
       setSelectedRequest(saved);
       setText('');
     } catch (nextError: unknown) {
@@ -821,6 +863,22 @@ function SingleDashboard() {
     window.setTimeout(() => setCopied(false), 1800);
   };
 
+  const changeRequestStatus = async (status: string) => {
+    if (!selectedRequest) return;
+    try {
+      const updated = await updateRequestStatus(selectedRequest.id, status);
+      setRequests((current) => current.map((request) => request.id === updated.id ? updated : request));
+      setSelectedRequest(updated);
+      setSummary((current) => current ? {
+        ...current,
+        completed_requests: requests.filter((request) => request.status === 'completed').length + (updated.status === 'completed' && selectedRequest.status !== 'completed' ? 1 : updated.status !== 'completed' && selectedRequest.status === 'completed' ? -1 : 0),
+        pending_requests: current.total_requests - (requests.filter((request) => request.status === 'completed').length + (updated.status === 'completed' && selectedRequest.status !== 'completed' ? 1 : updated.status !== 'completed' && selectedRequest.status === 'completed' ? -1 : 0)),
+      } : current);
+    } catch (nextError: unknown) {
+      setError(nextError instanceof Error ? nextError.message : 'The request status could not be updated.');
+    }
+  };
+
   return (
     <PageFrame>
       <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
@@ -831,8 +889,13 @@ function SingleDashboard() {
         {error && <div className="mb-5 rounded-xl border border-[#ead2a0] bg-[#fcf2d8] p-3 text-sm text-[#765821]" role="alert">{error}</div>}
         <section className="mb-5 rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5 sm:p-6">
           <div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">New citizen requests</p><h2 className="mt-1 font-serif text-2xl font-bold">Latest signals</h2></div><span className="text-xs text-[#698079]">Newest first · shared SQLite feed</span></div>
-          <div className="mt-4 divide-y divide-[#e5ded1]">{requests.slice(0, 3).map((request) => <button type="button" key={request.id} onClick={() => setSelectedRequest(request)} className="flex w-full flex-wrap items-center justify-between gap-3 py-3 text-left first:pt-0"><div className="min-w-0"><p className="truncate text-sm font-bold">{request.location} · {request.category}</p><p className="mt-1 truncate text-xs text-[#698079]">{request.text}</p></div><span className="rounded-full bg-[#e8eee7] px-3 py-1 text-[10px] font-bold text-[#52736c]">{request.language === 'hi' ? 'Hindi' : 'English'} · {request.urgency}</span></button>)}</div>
+          <div className="mt-4 divide-y divide-[#e5ded1]">{requests.slice(0, 3).map((request) => <button type="button" key={request.id} onClick={() => setSelectedRequest(request)} className="flex w-full flex-wrap items-center justify-between gap-3 py-3 text-left first:pt-0"><div className="min-w-0"><p className="truncate text-sm font-bold">{request.location} · {request.category}</p><p className="mt-1 truncate text-xs text-[#698079]">{request.text}</p><p className="mt-1 truncate text-xs text-[#52736c]">English normalization: {request.translated_text}</p></div><span className="rounded-full bg-[#e8eee7] px-3 py-1 text-[10px] font-bold text-[#52736c]">{languageName(request.language)} · {request.urgency} · {request.status === 'completed' ? 'Completed' : 'Pending'}</span></button>)}</div>
         </section>
+        {selectedRequest && <section className="mb-5 rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5 sm:p-6" aria-label="Request details">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">Request details</p><h2 className="mt-1 font-serif text-2xl font-bold">#{selectedRequest.id} · {selectedRequest.location}</h2></div><select aria-label="Update request status" value={selectedRequest.status} onChange={(event) => void changeRequestStatus(event.target.value)} className="rounded-lg border border-[#cfd8d0] bg-[#f9f5ed] px-3 py-2 text-xs font-bold"><option value="new">Pending</option><option value="under_review">Under Review</option><option value="approved">Approved</option><option value="in_progress">In Progress</option><option value="completed">Completed</option><option value="rejected">Rejected</option></select></div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2"><div className="rounded-xl bg-[#f0eadf] p-4 text-sm leading-6"><p><b>Original citizen statement:</b> {selectedRequest.text}</p><p className="mt-2"><b>English interpretation:</b> {selectedRequest.translated_text}</p></div><div className="rounded-xl bg-[#e8eee7] p-4 text-sm leading-6"><p><b>Category:</b> {selectedRequest.category}</p><p><b>Subcategory:</b> {selectedRequest.subcategory}</p><p><b>Issue:</b> {selectedRequest.issue}</p><p><b>Language:</b> {languageName(selectedRequest.language)}</p><p><b>Urgency:</b> {selectedRequest.urgency} · <b>Severity:</b> {selectedRequest.severity}</p><p><b>Status:</b> {selectedRequest.status === 'new' ? 'Pending' : selectedRequest.status}</p><p><b>Submitted:</b> {new Date(selectedRequest.created_at).toLocaleString()}</p></div></div>
+          <p className="mt-3 text-xs leading-5 text-[#698079]"><b>AI understanding:</b> {selectedRequest.understanding}</p>
+        </section>}
         <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Kpi label="Total citizen requests" value={summary ? String(summary.total_requests) : '…'} trend="SQLite-backed signals" icon={<MessageSquare size={18} />} />
           <Kpi label="High priority requests" value={summary ? String(summary.high_priority_requests) : '…'} trend="Score 75 and above" icon={<Target size={18} />} />
@@ -865,8 +928,8 @@ function Router() {
   return <RoutedErrorBoundary><Switch>
     <Route path="/" component={PortalChooser} />
     <Route path="/citizen">{() => <ProtectedPortal role="citizen"><Citizen /></ProtectedPortal>}</Route>
-    <Route path="/government">{() => <ProtectedPortal role="government"><SingleDashboard /></ProtectedPortal>}</Route>
-    <Route path="/dashboard">{() => <ProtectedPortal role="government"><SingleDashboard /></ProtectedPortal>}</Route>
+    <Route path="/government">{() => <ProtectedPortal role="government"><GovernmentWorkDashboard /></ProtectedPortal>}</Route>
+    <Route path="/dashboard">{() => <ProtectedPortal role="government"><GovernmentWorkDashboard /></ProtectedPortal>}</Route>
     <Route component={NotFound} />
   </Switch></RoutedErrorBoundary>;
 }
@@ -900,6 +963,98 @@ function PortalChooser() {
       </main>
     </PageFrame>
   );
+}
+
+function GovernmentWorkDashboard() {
+  const [summary, setSummary] = useState<import('@/lib/api').WorkSummary | null>(null);
+  const [works, setWorks] = useState<CitizenRequest[]>([]);
+  const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState<number | null>(null);
+  const [message, setMessage] = useState('');
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const [nextSummary, nextWorks] = await Promise.all([
+        getWorkSummary(),
+        listGovernmentRequests({ status: filter === 'all' ? undefined : filter, search: search || undefined }),
+      ]);
+      setSummary(nextSummary);
+      setWorks(nextWorks);
+      setMessage('');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to load government works.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+    const onFocus = () => void refresh();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [filter]);
+
+  const changeStatus = async (id: number, status: string) => {
+    setUpdating(id);
+    try {
+      await updateGovernmentStatus(id, { status, notes: status === 'completed' ? 'Completed by prototype government operator.' : '' });
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to update work. Please try again.');
+    } finally {
+      setUpdating(null);
+    }
+  };
+
+  const changeProgress = async (id: number, progress_percent: number) => {
+    setUpdating(id);
+    try {
+      await updateGovernmentProgress(id, { progress_percent, notes: `Progress updated to ${progress_percent}%.` });
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to update progress. Please try again.');
+    } finally {
+      setUpdating(null);
+    }
+  };
+
+  const isRecentRequest = (createdAt: string) => {
+    const normalized = createdAt.includes('T') ? createdAt : `${createdAt.replace(' ', 'T')}Z`;
+    const ageMs = Date.now() - new Date(normalized).getTime();
+    return ageMs >= 0 && ageMs < 10 * 60 * 1000;
+  };
+
+  const relativeSubmittedTime = (createdAt: string) => {
+    const normalized = createdAt.includes('T') ? createdAt : `${createdAt.replace(' ', 'T')}Z`;
+    const ageMinutes = Math.max(0, Math.floor((Date.now() - new Date(normalized).getTime()) / 60000));
+    return ageMinutes < 1 ? 'Just now' : `${ageMinutes} min ago`;
+  };
+
+  const cards = summary ? [
+    ['Total Works', summary.total], ['Pending', summary.pending], ['In Progress', summary.in_progress],
+    ['On Hold', summary.on_hold], ['Completed', summary.completed], ['High Risk', summary.high_risk], ['Urgent', summary.urgent],
+  ] : [];
+
+  return <PageFrame><main className="mx-auto max-w-[1240px] px-5 py-10 lg:px-8">
+    <div className="flex flex-wrap items-end justify-between gap-4">
+      <div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">Government operations</p><h1 className="mt-2 font-serif text-4xl font-bold">Work management dashboard</h1><p className="mt-2 text-sm text-[#698079]">SQLite-backed civic work queue · Prototype / Sample Supporting Data</p></div>
+      <button type="button" onClick={() => void refresh()} className="rounded-xl border border-[#cfd8d0] px-4 py-2.5 text-sm font-bold text-[#315a58]">{loading ? 'Refreshing…' : 'Refresh data'}</button>
+    </div>
+    {message && <p className="mt-4 rounded-xl border border-[#ead2a0] bg-[#fcf2d8] p-3 text-sm text-[#765821]" role="alert">{message}</p>}
+    <div className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-7">{cards.map(([label, value]) => <Kpi key={String(label)} label={String(label)} value={String(value)} trend="from SQLite" icon={<Activity size={16} />} />)}</div>
+    <div className="mt-7 flex flex-wrap gap-3">
+      <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void refresh(); }} placeholder="Search requests, locations, categories..." className="min-w-[260px] flex-1 rounded-xl border border-[#cfd8d0] bg-[#fcf8f1] px-4 py-3 text-sm outline-none" />
+      <select value={filter} onChange={(event) => setFilter(event.target.value)} className="rounded-xl border border-[#cfd8d0] bg-[#fcf8f1] px-4 py-3 text-sm"><option value="all">All works</option><option value="pending">Pending</option><option value="in_progress">In Progress</option><option value="on_hold">On Hold</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select>
+    </div>
+    <section className="mt-5 rounded-2xl border border-[#d9d2c4] bg-[#fcf8f1] p-5 sm:p-7">
+      <div className="flex items-center justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#c77a52]">Recent Citizen Requests</p><h2 className="mt-2 font-serif text-2xl font-bold">{filter === 'all' ? 'Newest reports first' : filter.replace('_', ' ')}</h2></div><span className="text-xs text-[#698079]">{works.length} records</span></div>
+      <div className="mt-5 space-y-3">{loading && <p className="text-sm text-[#698079]">Loading works…</p>}{!loading && !works.length && <p className="text-sm text-[#698079]">No works match this filter.</p>}{works.map((work) => <article key={work.id} className="rounded-xl border border-[#e5ded1] bg-[#f9f5ed] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold text-[#52736c]">{work.request_id || `REQ-${String(work.id).padStart(4, '0')}`} · {work.category}</p><h3 className="mt-1 font-bold">{work.issue}</h3><p className="mt-1 text-xs text-[#698079]">{work.location || 'Location not provided'} · Submitted {relativeSubmittedTime(work.created_at)} · {work.urgency} urgency · {work.severity} severity · Risk {work.risk_level}</p></div><div className="flex items-center gap-2"><span className="rounded-full bg-[#e8eee7] px-3 py-1 text-[10px] font-bold uppercase text-[#315a58]">{work.status.replace('_', ' ')}</span>{isRecentRequest(work.created_at) && <span className="rounded-full bg-[#fcf2d8] px-2 py-1 text-[10px] font-bold uppercase text-[#765821]">NEW</span>}</div></div><div className="mt-4 flex flex-wrap items-center gap-3"><label className="text-xs text-[#698079]">Progress<select value={work.progress_percent} disabled={updating === work.id || work.status === 'completed'} onChange={(event) => void changeProgress(work.id, Number(event.target.value))} className="ml-2 rounded-lg border border-[#cfd8d0] bg-white px-2 py-1"><option value={0}>0%</option><option value={10}>10%</option><option value={25}>25%</option><option value={50}>50%</option><option value={75}>75%</option><option value={90}>90%</option><option value={100}>100%</option></select></label>{work.status === 'pending' && <button type="button" disabled={updating === work.id} onClick={() => void changeStatus(work.id, 'in_progress')} className="rounded-lg bg-[#17383e] px-3 py-2 text-xs font-bold text-white">{updating === work.id ? 'Updating…' : 'Start Work'}</button>}{work.status !== 'completed' && <button type="button" disabled={updating === work.id} onClick={() => void changeStatus(work.id, 'completed')} className="rounded-lg border border-[#5d9a85] px-3 py-2 text-xs font-bold text-[#315a58]">Mark Completed</button>}<span className="text-xs font-bold text-[#698079]">Priority {work.priority_score}/100</span></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-[#e7e1d6]"><div className="h-full rounded-full bg-[#5d9a85]" style={{ width: `${work.progress_percent}%` }} /></div></article>)}</div>
+    </section>
+  </main></PageFrame>;
 }
 
 function LoginPage({ role }: { role: PortalRole }) {

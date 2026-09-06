@@ -4,7 +4,8 @@ export type RequestAnalysis = {
   understanding: string;
   categories: string[];
   category: string;
-  location: string;
+  subcategory: string;
+  location: string | null;
   issue: string;
   urgency: string;
   severity: string;
@@ -17,8 +18,16 @@ export type RequestAnalysis = {
 export type CitizenRequest = RequestAnalysis & {
   id: number;
   text: string;
+  request_id: string;
+  risk_level: string;
+  assigned_to: string | null;
+  progress_percent: number;
+  government_notes: string;
+  completion_notes: string;
+  completed_at: string | null;
   status: string;
   created_at: string;
+  updated_at: string;
 };
 
 export type DashboardSummary = {
@@ -31,9 +40,16 @@ export type DashboardSummary = {
   top_location: string;
 };
 
+export type WorkSummary = {
+  total: number; pending: number; in_progress: number; on_hold: number;
+  completed: number; cancelled: number; high_risk: number; critical_risk: number;
+  urgent: number; completion_rate: number; average_resolution_days: number | null;
+};
+
 export type RequestInput = {
   text: string;
   location?: string;
+  selected_language?: string;
 };
 
 const API_BASE_URL = (
@@ -84,4 +100,32 @@ export function listRequests() {
 
 export function getDashboardSummary() {
   return request<DashboardSummary>('/requests/summary');
+}
+
+export function updateRequestStatus(id: number, status: string) {
+  return request<CitizenRequest>(`/requests/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function getWorkSummary() {
+  return request<WorkSummary>('/government/dashboard/summary');
+}
+
+export function listGovernmentRequests(params: { status?: string; risk?: string; urgency?: string; search?: string } = {}) {
+  const query = new URLSearchParams(Object.entries(params).filter((entry): entry is [string, string] => Boolean(entry[1])));
+  return request<CitizenRequest[]>(`/government/requests${query.toString() ? `?${query}` : ''}`);
+}
+
+export function updateGovernmentStatus(id: number, payload: { status: string; notes?: string; progress_percent?: number }) {
+  return request<CitizenRequest>(`/government/requests/${id}/status`, { method: 'PATCH', body: JSON.stringify(payload) });
+}
+
+export function updateGovernmentProgress(id: number, payload: { progress_percent: number; notes?: string }) {
+  return request<CitizenRequest>(`/government/requests/${id}/progress`, { method: 'PATCH', body: JSON.stringify(payload) });
+}
+
+export function updateGovernmentAssignment(id: number, assigned_to: string | null) {
+  return request<CitizenRequest>(`/government/requests/${id}/assignment`, { method: 'PATCH', body: JSON.stringify({ assigned_to }) });
 }
